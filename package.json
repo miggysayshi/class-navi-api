@@ -1,0 +1,20 @@
+{
+  "name": "class-navi-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed API client + MCP server for Kumon Class-Navi (reverse-engineered)",
+  "scripts": {
+    "login": "bun run src/index.ts login",
+    "call": "bun run src/index.ts call",
+    "mcp": "bun run src/mcp.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
