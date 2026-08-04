@@ -17,6 +17,7 @@
 
 import type { ClassNaviConfig } from "./config";
 import { TokenManager } from "./auth";
+import { METHODS_BY_NAME } from "./methods";
 
 /** Error reasons observed in the bundle's error enum. */
 export const ErrorReason = {
@@ -121,15 +122,41 @@ export class ClassNaviClient {
    * Call one RPC method. Serialized behind other in-flight calls (the app
    * allows a single in-flight request per client). Resolves with the raw
    * envelope — use `unwrap()` for the Result payload.
+   *
+   * Wire format (verified against real browser traffic):
+   *   URL:  {apiUrl}/{screenId}/{method}
+   *   Body: {...params, id: "<counter>", client: {applicationName, version,
+   *         programName, os, machineName}}
    */
   call<TResult = unknown>(
     method: string,
     params: Record<string, unknown> = {},
   ): Promise<ApiResponse<TResult>> {
+    const spec = METHODS_BY_NAME.get(method);
+    if (!spec) {
+      throw new ApiError(
+        ErrorReason.Communication,
+        undefined,
+        new Error(`Unknown method '${method}' — no screen ID in registry`),
+      );
+    }
     const run = async (): Promise<ApiResponse<TResult>> => {
       await this.auth.ensureFresh();
-      const url = `${this.config.apiUrl}/${method}/${this.requestId++}`;
-      const body = JSON.stringify(params, stringifyReplacer);
+      const url = `${this.config.apiUrl}/${spec.screenId}/${method}`;
+      const body = JSON.stringify(
+        {
+          ...params,
+          id: String(this.requestId++),
+          client: {
+            applicationName: "Class-Navi",
+            version: "1.0.0.0",
+            programName: "Class-Navi",
+            os: `Bun/${typeof Bun !== "undefined" ? Bun.version : "runtime"}`,
+            machineName: "-",
+          },
+        },
+        stringifyReplacer,
+      );
       let res: Response;
       try {
         res = await fetch(url, {

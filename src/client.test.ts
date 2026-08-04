@@ -11,6 +11,7 @@ import { TokenManager } from "./auth";
 const fakeConfig = {
   username: "u",
   password: "p",
+  countryCd: "USA",
   apiUrl: "https://fake/api",
   tokenUrl: "https://fake/token",
   requestTimeoutMs: 5000,
@@ -52,18 +53,21 @@ test("call() builds the right URL, headers, body, and unwraps Result", async () 
     { StudentID: "42" },
   );
 
-  expect(seen.value?.url).toBe("https://fake/api/GetStudentStatus/1");
+  expect(seen.value?.url).toBe("https://fake/api/ATE0010P/GetStudentStatus");
   expect(seen.value?.headers["Authorization"]).toBe("Bearer tok");
   expect(seen.value?.headers["X-User-ID"]).toBe("u");
   expect(seen.value?.headers["Content-Type"]).toBe("application/json");
-  expect(JSON.parse(seen.value?.body ?? "{}")).toEqual({ StudentID: "42" });
+  const body = JSON.parse(seen.value?.body ?? "{}");
+  expect(body).toMatchObject({ StudentID: "42", id: "1", client: { applicationName: "Class-Navi" } });
   expect(unwrap(res)).toEqual({ ResultCode: 0, StudentName: "Aiko" });
 });
 
 test("request id increments across calls", async () => {
   const urls: string[] = [];
-  stubFetch(async (url) => {
+  const ids: string[] = [];
+  stubFetch(async (url, init) => {
     urls.push(url);
+    ids.push(JSON.parse(String(init.body)).id);
     return new Response(JSON.stringify({ ID: "x", Result: { ResultCode: 0 } }), { status: 200 });
   });
 
@@ -71,9 +75,10 @@ test("request id increments across calls", async () => {
   await client.call("GetAnnounce");
   await client.call("GetAnnounce");
   expect(urls).toEqual([
-    "https://fake/api/GetAnnounce/1",
-    "https://fake/api/GetAnnounce/2",
+    "https://fake/api/ATE0010P/GetAnnounce",
+    "https://fake/api/ATE0010P/GetAnnounce",
   ]);
+  expect(ids).toEqual(["1", "2"]);
 });
 
 test("non-zero ResultCode throws via unwrap()", async () => {

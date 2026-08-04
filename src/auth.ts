@@ -65,12 +65,15 @@ export class TokenManager {
     return (await res.json()) as TokenResponse;
   }
 
-  /** Password-grant login: hashes the password exactly like the web app. */
+  /** Password-grant login, faithful to the web app's `onClick_loginBtn`:
+   *  - token username = `${countryCd}/${loginId}`  (e.g. "USA/00970532")
+   *  - hash salt      = `${countryCd}${loginId}`   (e.g. "USA00970532") */
   async login(): Promise<void> {
-    const passwordHash = await hashPassword(this.config.password, this.config.username);
+    const { username, password, countryCd } = this.config;
+    const passwordHash = await hashPassword(password, `${countryCd}${username}`);
     const body = new URLSearchParams({
       grant_type: "password",
-      username: this.config.username,
+      username: `${countryCd}/${username}`,
       password: passwordHash,
     });
     const token = await this.postForm(body);

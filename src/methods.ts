@@ -96,6 +96,8 @@ export const METHOD_NAMES: string[] = METHODS.map((m) => m.name);
 
 const BY_NAME = new Map(METHODS.map((m) => [m.name, m]));
 
+export const METHODS_BY_NAME: ReadonlyMap<string, MethodSpec> = BY_NAME;
+
 export function isKnownMethod(name: string): boolean {
   return BY_NAME.has(name);
 }

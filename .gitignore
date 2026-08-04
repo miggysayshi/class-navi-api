@@ -3,3 +3,4 @@ node_modules/
 *.har
 *.har.gz
 .DS_Store
+captures/

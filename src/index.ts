@@ -28,7 +28,9 @@ async function cmdCall(method: string, paramsJson: string): Promise<void> {
   await auth.login();
   const client = new ClassNaviClient(config, auth);
   const response = await client.call(method, paramsJson ? JSON.parse(paramsJson) : {});
-  console.log(JSON.stringify(unwrap(response), null, 2));
+  // print the full envelope — the app keeps data fields (StudentList,
+  // MainCenterID, ...) at the top level next to Result
+  console.log(JSON.stringify(response, null, 2));
 }
 
 const [cmd, arg1, arg2] = process.argv.slice(2);

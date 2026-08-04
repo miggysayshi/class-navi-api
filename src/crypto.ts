@@ -1,8 +1,10 @@
 /**
- * Password hashing scheme used by Class-Navi (verified from the JS bundle):
- *   base64( sha256( sha256(password) + username ) )
- * where sha256(password) is the raw digest bytes concatenated with the UTF-8
- * bytes of the username, hashed again, then base64-encoded.
+ * Password hashing scheme used by Class-Navi (verified from the JS bundle,
+ * `passwordToB64Hash(e, n)` — called with `(password, salt)`):
+ *   base64( sha256( HEX_UPPER(sha256(salt)) + password ) )
+ * The salt is hashed first, hex-encoded UPPERCASE (`ue.toHexString` calls
+ * `.toUpperCase()`), concatenated with the UTF-8 password, hashed again,
+ * base64-encoded. Salt = systemCountryCD + loginID (e.g. "USA00970532").
  */
 
 const enc = new TextEncoder();
@@ -12,11 +14,12 @@ function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   return crypto.subtle.digest("SHA-256", bytes.buffer as ArrayBuffer).then((d) => new Uint8Array(d));
 }
 
-export async function hashPassword(password: string, username: string): Promise<string> {
-  const inner = await sha256(enc.encode(password));
-  const combined = new Uint8Array(inner.length + username.length);
-  combined.set(inner, 0);
-  combined.set(enc.encode(username), inner.length);
-  const outer = await sha256(combined);
+function toHexUpper(bytes: Uint8Array): string {
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+export async function hashPassword(password: string, salt: string): Promise<string> {
+  const inner = await sha256(enc.encode(salt));
+  const outer = await sha256(enc.encode(toHexUpper(inner) + password));
   return Buffer.from(outer).toString("base64");
 }

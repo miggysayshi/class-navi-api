@@ -5,6 +5,8 @@ export interface ClassNaviConfig {
   username: string;
   /** Password for the login page. */
   password: string;
+  /** Country code (systemCountryCD) — the web app uses "USA". */
+  countryCd: string;
   /** RPC endpoint base URL. */
   apiUrl: string;
   /** OAuth2 token endpoint. */
@@ -14,6 +16,7 @@ export interface ClassNaviConfig {
 }
 
 const DEFAULTS = {
+  countryCd: "USA",
   apiUrl: "https://instructor2-lon.digital.kumon.com/USA/api",
   tokenUrl: "https://instructor2-lon.digital.kumon.com/USA/token",
   requestTimeoutMs: 60_000,
@@ -30,6 +33,7 @@ export function loadConfig(env: Record<string, string | undefined> = Bun.env): C
   return {
     username,
     password,
+    countryCd: env.CLASSNAVI_COUNTRY_CD ?? DEFAULTS.countryCd,
     apiUrl: env.CLASSNAVI_API_URL ?? DEFAULTS.apiUrl,
     tokenUrl: env.CLASSNAVI_TOKEN_URL ?? DEFAULTS.tokenUrl,
     requestTimeoutMs: Number(env.CLASSNAVI_REQUEST_TIMEOUT_MS ?? DEFAULTS.requestTimeoutMs),
