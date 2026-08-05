@@ -56,6 +56,7 @@ needed. NOTE: the reference file `~/Downloads/student setting work 4-3-3.rtf` is
 as RTF (convert with `textutil -convert txt` before parsing).
 
 ### Task 1: Spike A — day-block edit mechanism
+**Depends on:** nothing (first).
 
 **Files:**
 - Create: `extension/docs/spike-a-day-blocks.md`
@@ -69,7 +70,8 @@ as RTF (convert with `textutil -convert txt` before parsing).
 - [ ] **Step 4: Write findings**
   `extension/docs/spike-a-day-blocks.md`: DOM structure with selectors, the edit gesture, the event protocol, and a concrete recipe for "replace day's blocks with [4,3,3] starting at WorksheetNO 41". Commit.
 
-### Task 2: Spike B — uniform-key round-trip
+### Task 3: Spike B — uniform-key round-trip
+**Depends on:** Task 2 (Spike C — needs its component-location recipe).
 
 **Files:**
 - Create: `extension/docs/spike-b-uniform-keys.md`
@@ -83,7 +85,8 @@ as RTF (convert with `textutil -convert txt` before parsing).
 - [ ] **Step 4: Write findings**
   `extension/docs/spike-b-uniform-keys.md`: whether arbitrary keys flow through UI+save, any validation errors, exact payload used. Commit.
 
-### Task 3: Spike C — Angular internals access
+### Task 2: Spike C — Angular internals access
+**Depends on:** nothing (runs before Spike B — B needs its recipe).
 
 **Files:**
 - Create: `extension/docs/spike-c-angular.md`
