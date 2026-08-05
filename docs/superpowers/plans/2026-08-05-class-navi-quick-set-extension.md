@@ -48,7 +48,12 @@ extension/
 
 ## Spike tasks first
 
-The three spec §7 unknowns are design-shaping. Complete them in order before feature work. All spikes use the live app via browser automation (`https://class-navi.digital.kumon.com/us/index.html`, creds in `~/class-navi-api/.env`) and the API client in `~/class-navi-api` where writes are needed. NOTE: the reference file `~/Downloads/student setting work 4-3-3.rtf` is a HAR saved as RTF (convert with `textutil -convert txt` before parsing).
+The three spec §7 unknowns are design-shaping. Complete them in order before feature work
+(Spike C before Spike B — B's console injection needs C's component-location recipe). All
+spikes use the live app via browser automation (`https://class-navi.digital.kumon.com/us/index.html`,
+creds in `~/class-navi-api/.env`) and the API client in `~/class-navi-api` where writes are
+needed. NOTE: the reference file `~/Downloads/student setting work 4-3-3.rtf` is a HAR saved
+as RTF (convert with `textutil -convert txt` before parsing).
 
 ### Task 1: Spike A — day-block edit mechanism
 
@@ -254,6 +259,7 @@ QS.patterns = (function () {
 ```js
 // test/storage.test.js
 import { test, expect, mock } from "bun:test";
+await import("../src/patterns.js"); // QS.patterns — storage.js depends on it at runtime
 await import("../src/storage.js");
 const { DEFAULT_PATTERNS, loadPatterns, savePatterns } = globalThis.QS.storage;
 
@@ -535,8 +541,12 @@ QS.dropdown = (function () {
 })();
 ```
 
-- [ ] **Step 4: Manual verify**
-  (a) In the options page, add uniform patterns `4`, `3`, `2` (options page already works from Task 7). (b) Load unpacked; open a student's assignment editor; open the gear dropdown; confirm injected options (4, 3, 2 worksheets) appear exactly once and native 10/5 are not duplicated. (c) If no Angular component is found, a `console.warn` appears (see Task 9 Step 2) — report it. Do NOT save. Commit (`feat: uniform option injection`).
+- [ ] **Step 4: Console-driven verification (no boot code exists yet — that's Task 9)**
+  Load unpacked; open a student's assignment editor. In the **page console** (all MAIN scripts run in the page world, so `QS` is reachable):
+  ```js
+  QS.dropdown.injectUniformOptions(["4", "3", "2"]);
+  ```
+  Open the gear dropdown; confirm injected options (4, 3, 2 worksheets) appear exactly once and native 10/5 are not duplicated. Also verify graceful failure: `QS.angular.findMinWorksheetCountList()` on a non-editor screen returns `null` without throwing. Do NOT save. Commit (`feat: uniform option injection`).
 
 ### Task 9: Pattern section + day-block reshape (the core)
 
@@ -619,8 +629,19 @@ function requestPatterns() {
   });
 }
 
+async function getPatternsWithRetry() {
+  let patterns = await requestPatterns();
+  if (!patterns) {
+    // ISOLATED listener may not be registered yet (cross-world task ordering)
+    await new Promise((r) => setTimeout(r, 300));
+    patterns = await requestPatterns();
+  }
+  if (!patterns) console.warn("[QuickSet] pattern bridge timed out — nothing injected.");
+  return patterns;
+}
+
 async function boot() {
-  const patterns = await requestPatterns();
+  const patterns = await getPatternsWithRetry();
   if (!patterns) return;
   const injected = QS.dropdown.injectUniformOptions(patterns);
   if (!injected && !QS.angular.findMinWorksheetCountList()) {
