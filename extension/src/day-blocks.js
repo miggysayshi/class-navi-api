@@ -1,8 +1,12 @@
 // src/day-blocks.js — classic script; reshapes worksheet blocks by calling the
 // app's own authenticated proxies (getStudyResultInfoList + registerStudySetInfo)
-// with the verified Spike B payload recipe. Everything operates on FRESH server
-// data fetched per operation — no stale model, no save-diff interaction.
-// Deterministic server-side replace per StudyScheduleIndex. Attaches to globalThis.QS.
+// with the verified Spike B payload recipe.
+//
+// Matching runs against the RENDER MODEL (the page comp's studyUnits — the
+// user's live view, including unsaved drag-created blocks). Timestamps + guard
+// values come from a fresh proxy fetch per save (stale timestamps get the save
+// Excluded, ErrorSec "01"). Deterministic server-side replace per SSI.
+// Attaches to globalThis.QS.
 var QS = globalThis.QS || (globalThis.QS = {});
 
 QS.blocks = (function () {
@@ -23,7 +27,39 @@ QS.blocks = (function () {
     }
   }
 
-  /** Build the getStudyResultInfoList params the app itself uses. */
+  /**
+   * Days from the render model. Editable cells = DeleteFlg "0" && editable !==
+   * false. Grouped by bindingData.id (the StudyScheduleIndex). Includes
+   * unsaved drag-created blocks — exactly what the user sees.
+   */
+  function daysFromRender(units) {
+    const byId = new Map();
+    for (const u of units) {
+      const bd = u && u.bindingData;
+      if (!bd || bd.id === undefined) continue;
+      if (String(u.DeleteFlg) === "1" || u.editable === false) continue;
+      if (!byId.has(bd.id)) byId.set(bd.id, []);
+      byId.get(bd.id).push(u);
+    }
+    const days = [];
+    for (const [id, cells] of byId) {
+      if (cells.length > 0) days.push({ id, cells });
+    }
+    return days;
+  }
+
+  /** Sum of a day's block sizes. */
+  function dayTotal(day) {
+    let sum = 0;
+    for (const c of day.cells) {
+      const from = Number(c.WorksheetNOFrom);
+      const to = Number(c.WorksheetNOTo);
+      if (Number.isFinite(from) && Number.isFinite(to)) sum += to - from + 1;
+    }
+    return sum;
+  }
+
+  /** getStudyResultInfoList params the app itself uses. */
   function fetchParams(comp) {
     const student = comp.curStudentInfo;
     const subject = comp.curSubjectInfo;
@@ -41,7 +77,7 @@ QS.blocks = (function () {
     };
   }
 
-  /** Fetch the freshest set data through the app's own proxy. */
+  /** Fresh set data through the app's own proxy (timestamp + guards source). */
   async function fetchFresh(comp) {
     if (!comp.proxy || typeof comp.proxy.getStudyResultInfoList !== "function") return null;
     const params = fetchParams(comp);
@@ -49,32 +85,6 @@ QS.blocks = (function () {
     const resp = await comp.proxy.getStudyResultInfoList(params);
     if (!resp || !resp.Result || resp.Result.ResultCode !== 0) return null;
     return resp;
-  }
-
-  /**
-   * Days from fresh source records. Editable (assignable) = DownloadFlg "0"
-   * (studied records carry "1"). Returns [{ id, cells }].
-   */
-  function daysFromRecords(records) {
-    const byId = {};
-    for (const u of records) {
-      if (!u || String(u.DeleteFlg) === "1" || String(u.DownloadFlg) !== "0") continue;
-      if (u.StudyScheduleIndex === undefined) continue;
-      if (!byId[u.StudyScheduleIndex]) byId[u.StudyScheduleIndex] = [];
-      byId[u.StudyScheduleIndex].push(u);
-    }
-    return Object.keys(byId).map(Number).map((id) => ({ id, cells: byId[id] }));
-  }
-
-  /** Sum of a day's block sizes. */
-  function dayTotal(day) {
-    let sum = 0;
-    for (const c of day.cells) {
-      const from = Number(c.WorksheetNOFrom);
-      const to = Number(c.WorksheetNOTo);
-      if (Number.isFinite(from) && Number.isFinite(to)) sum += to - from + 1;
-    }
-    return sum;
   }
 
   /** Guard values from studied records (DownloadFlg "1") — mirrors the app. */
@@ -100,26 +110,40 @@ QS.blocks = (function () {
   }
 
   /**
-   * Reshape one day (from fresh records) via the app's own register proxy.
-   * Returns { ok, errorSec, message }.
+   * Reshape one render-model day via the app's own register proxy.
+   * Fresh timestamp + guards are adopted per call. Returns { ok, errorSec, message }.
    */
   async function applyPatternToDay(comp, day, blocks) {
     try {
       if (!comp.proxy || typeof comp.proxy.registerStudySetInfo !== "function") {
         return { ok: false, message: "registerStudySetInfo proxy unavailable" };
       }
+      // fresh timestamp + guards: every successful save advances the server's
+      // NotDownloadLastUpdateTime — stale values get the save Excluded ("01")
+      const fresh = await fetchFresh(comp);
+      if (!fresh || !fresh.StudyUnitInfoList) {
+        return { ok: false, message: "could not fetch fresh set data" };
+      }
+      const params = fetchParams(comp);
+      const guards = guardValues(fresh.StudyUnitInfoList);
+      // delete only blocks that have real StudyIDs (unsaved drag-created blocks
+      // have none — the server treats their SSI as new)
       const deleteList = day.cells
-        .map((c) => ({ StudyID: c.StudyID, StudySec: c.StudySec || "1" }))
-        .filter((e) => e.StudyID);
+        .map((c) => c.bindingData)
+        .filter((bd) => bd && bd.StudyID)
+        .map((bd) => ({ StudyID: bd.StudyID, StudySec: bd.StudySec || "1" }));
       const start = Math.min(...day.cells.map((c) => Number(c.WorksheetNOFrom)));
       let from = start;
       const insertList = blocks.map((size) => {
-        const entry = { StudyScheduleIndex: day.id, WorksheetNOFrom: from, WorksheetNOTo: from + size - 1, GradingMethod: "1" };
+        const entry = {
+          StudyScheduleIndex: day.id,
+          WorksheetNOFrom: from,
+          WorksheetNOTo: from + size - 1,
+          GradingMethod: "1",
+        };
         from += size;
         return entry;
       });
-      const params = fetchParams(comp);
-      const guards = guardValues(comp.curStudentStudyInfo ? comp.curStudentStudyInfo.StudyUnitInfoList || [] : []);
       const payload = {
         SystemCountryCD: params.SystemCountryCD,
         CenterID: params.CenterID,
@@ -132,7 +156,7 @@ QS.blocks = (function () {
         DiagnosticTestSetRegisterKbn: "0",
         DeleteSetInfoList: deleteList,
         InsertSetInfoList: insertList,
-        NotDownloadLastUpdateTime: comp.curStudentStudyInfo ? comp.curStudentStudyInfo.NotDownloadLastUpdateTime : null,
+        NotDownloadLastUpdateTime: fresh.NotDownloadLastUpdateTime,
         NotUpdateMaxStudyScheduleIndex: guards.maxIdx,
         NotUpdateMaxWorksheetNO: guards.maxWs,
       };
@@ -142,6 +166,14 @@ QS.blocks = (function () {
       if (resultCode !== 0 || errorSec !== "00") {
         return { ok: false, errorSec, message: `save rejected (ResultCode ${resultCode}, ErrorSec ${errorSec})` };
       }
+      // refresh the grid + model through the app's own post-save path
+      if (typeof comp.updateCurViewDataAfterWorksheetChange === "function") {
+        try {
+          await comp.updateCurViewDataAfterWorksheetChange();
+        } catch (e) {
+          /* best-effort */
+        }
+      }
       return { ok: true, errorSec };
     } catch (err) {
       return { ok: false, message: String(err && err.message ? err.message : err) };
@@ -149,10 +181,9 @@ QS.blocks = (function () {
   }
 
   /**
-   * Apply a pattern (e.g. "4-3-3") to every assignable day whose total equals
-   * the pattern's sum (e.g. 10). Re-fetches fresh data around each save so the
-   * NotDownloadLastUpdateTime is never stale (stale → ErrorSec "01" exclusion).
-   * Returns { changed, results }.
+   * Apply a pattern (e.g. "4-3-3") to every assignable day in the RENDER MODEL
+   * whose editable total equals the pattern's sum (e.g. 10). Returns
+   * { changed, results }.
    */
   async function applyPatternToMatchingDays(rawPattern, root) {
     try {
@@ -161,50 +192,22 @@ QS.blocks = (function () {
       const sum = QS.patterns.patternSum(blocks);
       const comp = findPageComp(root);
       if (!comp) return { changed: 0, results: [{ message: "editor component not found" }] };
-      const fresh = await fetchFresh(comp);
-      if (!fresh || !Array.isArray(fresh.StudyUnitInfoList)) {
-        return { changed: 0, results: [{ message: "could not fetch set data" }] };
-      }
-      const matchIds = daysFromRecords(fresh.StudyUnitInfoList)
+      const matchIds = daysFromRender(comp.studyUnits)
         .filter((d) => dayTotal(d) === sum)
         .map((d) => d.id);
       let changed = 0;
       const results = [];
       for (const id of matchIds) {
-        // re-fetch before each save: every successful save advances the server
-        // timestamp; using a stale one gets the save Excluded
-        const f2 = await fetchFresh(comp);
-        if (!f2 || !Array.isArray(f2.StudyUnitInfoList)) {
-          results.push({ id, ok: false, message: "re-fetch failed before save" });
-          continue;
-        }
-        const day = daysFromRecords(f2.StudyUnitInfoList).find((d) => d.id === id);
+        // re-derive the day from the CURRENT model (a previous save's refresh
+        // may have rebuilt it)
+        const day = daysFromRender(comp.studyUnits).find((d) => d.id === id);
         if (!day) {
-          results.push({ id, ok: false, message: "day vanished between fetches" });
+          results.push({ id, ok: false, message: "day not in model anymore" });
           continue;
-        }
-        // adopt the fresh data so payload guards + timestamp are current
-        if (comp.curStudentStudyInfo) {
-          try {
-            comp.curStudentStudyInfo.StudyUnitInfoList = f2.StudyUnitInfoList;
-            comp.curStudentStudyInfo.NotDownloadLastUpdateTime = f2.NotDownloadLastUpdateTime;
-          } catch (e) {
-            /* best-effort */
-          }
         }
         const res = await applyPatternToDay(comp, day, blocks);
         results.push({ id, ...res });
-        if (res.ok) {
-          changed++;
-          // refresh the grid view through the app's own post-save path
-          if (typeof comp.updateCurViewDataAfterWorksheetChange === "function") {
-            try {
-              await comp.updateCurViewDataAfterWorksheetChange();
-            } catch (e) {
-              /* best-effort */
-            }
-          }
-        }
+        if (res.ok) changed++;
       }
       return { changed, results };
     } catch (e) {
