@@ -24,12 +24,20 @@ test("isValidPattern accepts only comma/hyphen separated positive ints", () => {
   expect(isValidPattern("4,3,3")).toBe(true);
   expect(isValidPattern("4 3 3")).toBe(false);
   expect(isValidPattern("4-0")).toBe(false);
+  expect(isValidPattern("4,,3")).toBe(false);
+  expect(isValidPattern("4-3-3-")).toBe(false);
 });
 
 test("groupPatternsBySum groups and orders by sum", () => {
   const groups = groupPatternsBySum(["10", "5-5", "4-3-3", "5", "3-2"]);
   expect(groups.map((g) => g.sum)).toEqual([5, 10]);
   expect(groups[1].patterns).toEqual(["10", "5-5", "4-3-3"]); // insertion order
+});
+
+test("groupPatternsBySum skips invalid entries", () => {
+  const groups = groupPatternsBySum(["4-3-3", "nope", "0-3", ""]);
+  expect(groups.map((g) => g.sum)).toEqual([10]);
+  expect(groups[0].patterns).toEqual(["4-3-3"]);
 });
 
 test("expandAcrossDays repeats pattern to cover N days", () => {
