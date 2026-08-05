@@ -40,10 +40,19 @@ async function boot() {
     if (!injected && !QS.angular.findMinWorksheetCountList()) {
       console.warn("[QuickSet] Angular component not found — injection disabled on this screen.");
     }
-    QS.dropdown.injectPatternSection(patterns, (raw) => {
+    QS.dropdown.injectPatternSection(patterns, async (raw) => {
       try {
-        const n = QS.blocks.applyPatternToMatchingDays(raw);
-        console.log(`[QuickSet] applied ${raw} to ${n} day(s)`);
+        const result = await QS.blocks.applyPatternToMatchingDays(raw);
+        if (result.changed > 0) {
+          console.log(`[QuickSet] applied ${raw} to ${result.changed} day(s)`);
+        } else {
+          const failed = result.results.filter((r) => !r.ok);
+          if (failed.length > 0) {
+            console.warn(`[QuickSet] ${raw} failed:`, failed.map((f) => f.message || f.errorSec).join("; "));
+          } else {
+            console.log(`[QuickSet] ${raw} matched 0 day(s) — nothing to change`);
+          }
+        }
       } catch (e) {
         console.warn("[QuickSet] pattern application failed:", e);
       }

@@ -1,19 +1,23 @@
-// src/day-blocks.js — classic script; reshapes worksheet blocks in BOTH the page
-// component's studyUnits (what the app's Save diff reads) and the grid component's
-// render copy (what the user sees); attaches to globalThis.QS
+// src/day-blocks.js — classic script; reshapes worksheet blocks by calling the
+// app's own authenticated registerStudySetInfo proxy with the verified payload
+// recipe (Spike B: ErrorSec "00" proven twice). No model mutation, no save-diff
+// interaction — deterministic server-side replace per StudyScheduleIndex.
+// Attaches to globalThis.QS.
 var QS = globalThis.QS || (globalThis.QS = {});
 
 QS.blocks = (function () {
   /**
-   * Locate a component via the shared __ngContext__ traversal (reuses QS.angular).
+   * Locate the ATD0010P page component. "checkDiff" uniquely identifies it
+   * (the grid component also exposes studyUnits and sits closer in the DOM walk).
    */
-  function findCompFrom(el, props) {
+  function findPageComp(root) {
     try {
+      const el = (root || document).querySelector(".setStudyUnitEditorContainer, study-unit-editor");
       if (!el) return null;
-      if (QS.angular && QS.angular.findComp) {
-        return QS.angular.findComp(el, props);
-      }
-      return null;
+      if (!QS.angular || typeof QS.angular.findComp !== "function") return null;
+      const found = QS.angular.findComp(el, ["checkDiff"]);
+      if (!found || !Array.isArray(found.comp.studyUnits)) return null;
+      return found.comp;
     } catch (e) {
       return null;
     }
@@ -64,121 +68,114 @@ QS.blocks = (function () {
   }
 
   /**
-   * Core reshape on one units array: replace the day's editable cells with the
-   * pattern blocks, preserving the first cell's StudyID/bindingData (the app's
-   * Save diff keys off those). Returns the new cells (for reuse across arrays).
+   * Build the registerStudySetInfo payload for replacing one day's blocks —
+   * mirrors the app's own save assembly (bundle: registerStudySetInfo call).
    */
-  function reshapeCells(all, dayCells, blocks) {
-    const sorted = dayCells.slice().sort((a, b) => Number(a.WorksheetNOFrom) - Number(b.WorksheetNOFrom));
-    const start = Number(sorted[0].WorksheetNOFrom);
-    if (!Number.isFinite(start)) return null;
-    const first = sorted[0];
-    const proto = Object.getPrototypeOf(first);
-    const news = [first];
-    for (let i = 1; i < blocks.length; i++) {
-      const from = start + blocks.slice(0, i).reduce((a, b) => a + b, 0);
-      const to = from + blocks[i] - 1;
-      const clone = Object.create(proto);
-      Object.assign(clone, first, {
-        WorksheetNOFrom: from,
-        WorksheetNOTo: to,
-        bindingData: Object.assign({}, first.bindingData, {
-          from: from,
-          to: to,
-          lastFrom: from,
-          lastTo: to,
-        }),
-      });
-      news.push(clone);
+  function buildPayload(comp, day, blocks) {
+    const info = comp.curStudentStudyInfo;
+    const student = comp.curStudentInfo;
+    const subject = comp.curSubjectInfo;
+    const cache = comp.context && comp.context.cache ? comp.context.cache : null;
+    const appConfig = comp.context && comp.context.appConfig ? comp.context.appConfig : null;
+    if (!info || !student || !subject || !cache || !appConfig) return null;
+
+    // delete the day's current blocks by StudyID (deterministic replace)
+    const deleteList = day.cells
+      .map((c) => c.bindingData)
+      .filter((bd) => bd && bd.StudyID)
+      .map((bd) => ({ StudyID: bd.StudyID, StudySec: bd.StudySec || "1" }));
+
+    // insert the new pattern blocks on the day's true StudyScheduleIndex
+    const start = Math.min(...day.cells.map((c) => Number(c.WorksheetNOFrom)));
+    let from = start;
+    const insertList = blocks.map((size) => {
+      const entry = { StudyScheduleIndex: day.id, WorksheetNOFrom: from, WorksheetNOTo: from + size - 1, GradingMethod: "1" };
+      from += size;
+      return entry;
+    });
+
+    // guard values: max studied index/worksheet among DownloadFlg "1" records
+    let maxIdx = null;
+    let maxWs = null;
+    const studied = (info.StudyUnitInfoList || []).filter((u) => String(u.DownloadFlg) === "1");
+    if (studied.length > 0) {
+      maxIdx = Math.max(...studied.map((u) => Number(u.StudyScheduleIndex)));
+      const atMax = studied.filter((u) => Number(u.StudyScheduleIndex) === maxIdx);
+      let hasSec3 = false;
+      for (const u of atMax) if (String(u.StudySec) === "3") { hasSec3 = true; break; }
+      if (!hasSec3) maxWs = Math.max(...atMax.map((u) => Number(u.WorksheetNOTo)));
     }
-    first.WorksheetNOFrom = start;
-    first.WorksheetNOTo = start + blocks[0] - 1;
-    first.bindingData.from = start;
-    first.bindingData.to = start + blocks[0] - 1;
-    first.bindingData.lastFrom = start;
-    first.bindingData.lastTo = start + blocks[0] - 1;
-    // remove the day's old cells, re-insert the new ones at the first old index
-    const oldIdxs = sorted.map((c) => all.indexOf(c)).filter((i) => i >= 0).sort((a, b) => a - b);
-    if (oldIdxs.length === 0) return null;
-    const at = oldIdxs[0];
-    for (let i = oldIdxs.length - 1; i >= 0; i--) all.splice(oldIdxs[i], 1);
-    all.splice(at, 0, ...news);
-    return news;
+
+    return {
+      SystemCountryCD: appConfig.systemCountryCD || "USA",
+      CenterID: cache.instructorInfo.MainCenterID,
+      StudentID: student.StudentID,
+      ClassID: subject.ClassID,
+      ClassStudentSeq: subject.ClassStudentSeq,
+      SubjectCD: comp.curSubjectCD,
+      WorksheetCD: comp.curWorksheetCD,
+      FinishTestSetInfoList: [],
+      DiagnosticTestSetRegisterKbn: "0",
+      DeleteSetInfoList: deleteList,
+      InsertSetInfoList: insertList,
+      NotDownloadLastUpdateTime: info.NotDownloadLastUpdateTime,
+      NotUpdateMaxStudyScheduleIndex: maxIdx,
+      NotUpdateMaxWorksheetNO: maxWs,
+    };
   }
 
   /**
-   * Reshape one day in BOTH models: the page comp's studyUnits (Save reads it)
-   * and the grid comp's render copy (the user sees it). Returns true on success.
+   * Reshape one day via the app's own proxy. Returns { ok, errorSec, message }.
    */
-  function applyPatternToDay(day, blocks) {
+  async function applyPatternToDay(day, blocks) {
     try {
-      if (!day || !Array.isArray(blocks) || blocks.length === 0 || day.cells.length === 0) return false;
-      const pageComp = findPageComp();
-      if (!pageComp || !Array.isArray(pageComp.studyUnits)) return false;
-      const pageCells = day.cells.filter((c) => pageComp.studyUnits.includes(c));
-      if (pageCells.length === 0) return false;
-      const reshaped = reshapeCells(pageComp.studyUnits, pageCells, blocks);
-      if (!reshaped) return false;
-      // mirror into the grid component's render copy (same structure, same id)
-      try {
-        const grid = findCompFrom(document.querySelector("DIV.ATD0010P-root"), ["studyUnits"]);
-        if (grid && Array.isArray(grid.comp.studyUnits)) {
-          const gridDayCells = grid.comp.studyUnits.filter(
-            (c) => c.bindingData && c.bindingData.id === day.id && String(c.DeleteFlg) === "0" && c.editable !== false,
-          );
-          if (gridDayCells.length > 0) reshapeCells(grid.comp.studyUnits, gridDayCells, blocks);
-        }
-      } catch (e) {
-        /* grid mirror is best-effort — never throw into the page */
+      const comp = findPageComp();
+      if (!comp) return { ok: false, message: "editor component not found" };
+      if (!comp.proxy || typeof comp.proxy.registerStudySetInfo !== "function") {
+        return { ok: false, message: "registerStudySetInfo proxy unavailable" };
       }
-      // the app gates Save on checkDiff() — flip it via the app's own method
-      if (typeof pageComp.checkDiff === "function") {
+      const payload = buildPayload(comp, day, blocks);
+      if (!payload) return { ok: false, message: "could not build payload" };
+      const resp = await comp.proxy.registerStudySetInfo(payload);
+      const resultCode = resp && resp.Result ? resp.Result.ResultCode : -1;
+      const errorSec = resp ? resp.ErrorSec : null;
+      if (resultCode !== 0 || errorSec !== "00") {
+        return { ok: false, errorSec, message: `save rejected (ResultCode ${resultCode}, ErrorSec ${errorSec})` };
+      }
+      // refresh the editor view through the app's own post-save path
+      if (typeof comp.updateCurViewDataAfterWorksheetChange === "function") {
         try {
-          pageComp.checkDiff();
+          await comp.updateCurViewDataAfterWorksheetChange();
         } catch (e) {
-          /* never throw into the page */
+          /* refresh is best-effort */
         }
       }
-      return true;
-    } catch (e) {
-      // never throw into the page
-      return false;
+      return { ok: true, errorSec };
+    } catch (err) {
+      return { ok: false, message: String(err && err.message ? err.message : err) };
     }
   }
 
   /**
    * Apply a pattern (e.g. "4-3-3") to every day whose editable total equals
-   * the pattern's sum (e.g. 10). Returns the number of days reshaped.
+   * the pattern's sum (e.g. 10). Returns { changed, results }.
    */
-  function applyPatternToMatchingDays(rawPattern, root) {
+  async function applyPatternToMatchingDays(rawPattern, root) {
     try {
       const blocks = QS.patterns.parsePattern(rawPattern);
-      if (!blocks) return 0;
+      if (!blocks) return { changed: 0, results: [] };
       const sum = QS.patterns.patternSum(blocks);
       let changed = 0;
+      const results = [];
       for (const day of findDays(root)) {
-        if (dayBlockTotal(day) === sum) {
-          if (applyPatternToDay(day, blocks)) changed++;
-        }
+        if (dayBlockTotal(day) !== sum) continue;
+        const res = await applyPatternToDay(day, blocks);
+        results.push({ id: day.id, ...res });
+        if (res.ok) changed++;
       }
-      return changed;
+      return { changed, results };
     } catch (e) {
-      return 0;
-    }
-  }
-
-  function findPageComp(root) {
-    try {
-      const el = (root || document).querySelector(".setStudyUnitEditorContainer, study-unit-editor");
-      if (!el) return null;
-      // "checkDiff" uniquely identifies the PAGE component (the grid component
-      // also exposes studyUnits and sits closer in the DOM walk — searching for
-      // studyUnits first would grab the grid comp and leave Save disabled)
-      const found = findCompFrom(el, ["checkDiff"]);
-      if (!found || !Array.isArray(found.comp.studyUnits)) return null;
-      return found.comp;
-    } catch (e) {
-      return null;
+      return { changed: 0, results: [{ message: String(e && e.message ? e.message : e) }] };
     }
   }
 
