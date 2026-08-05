@@ -105,7 +105,8 @@ Two injection paths (see 3.2/3.3) — both modify ONLY the existing dropdown pan
 
 ### 3.2 Uniform options (native fit)
 
-Push entries into the component's `minWorksheetUnitCountList`:
+Single-number patterns from storage (see §3.4) are injected into the app's native
+worksheet-options list. Push entries into the component's `minWorksheetUnitCountList`:
 
 ```js
 { value: "4 worksheets per study", key: 4 }
@@ -116,6 +117,10 @@ Push entries into the component's `minWorksheetUnitCountList`:
 Implementation: locate the Angular component instance owning `minWorksheetUnitCountList`
 (via `ng.getComponent` / `__ngContext__` traversal on the `.setting-options` element),
 push, and let Angular re-render. The app's existing selection flow handles the rest.
+
+**Storage is the single source of truth** — the injected uniform options are generated
+from the stored pattern list (every stored single-number pattern becomes a native
+option; removing it in the editor removes it from the dropdown).
 
 **Open question (verify during build):** whether the app's save path accepts arbitrary
 `key` values (server-side it is block-list based, so it should; verify with a live
@@ -130,11 +135,16 @@ options:
 Page pattern:  [ 4-3-3 ] [ 3-2-3-2 ] [ 2-2-2-2-2 ] [ 5-5 ]
 ```
 
-Clicking a pattern reshapes the current day's blocks (or the assignment period's days)
-to the pattern's block sizes — replicating the user's manual manipulation:
-- Detect the day row(s) in `.setStudyUnitEditorContainer` / `.studyUnit`.
-- Determine current block boundaries and the starting `WorksheetNO`.
-- Replace one block of N pages with the pattern blocks (e.g. 10 → 4,3,3).
+**Application rule (decided with Miguel):** clicking a pattern reshapes **every day in
+the assignment period whose current block total equals the pattern's sum**, replicating
+the user's manual manipulation:
+
+- Detect the day rows in `.setStudyUnitEditorContainer` / `.studyUnit`.
+- For each day whose blocks sum to the pattern sum (e.g. 10): replace its blocks with
+  the pattern's blocks, preserving the day's starting `WorksheetNO` and incrementing
+  per block (10-page day 41–50 → blocks 41–44, 45–47, 48–50).
+- Days whose total does not match the pattern sum are **skipped (no-op)** — e.g.
+  clicking `3-2` (sum 5) leaves 10-page days untouched and reshapes 5-page days.
 - Fire the same DOM events the app uses so Angular registers the change (input/change
   events on the app's controls; exact mechanism to be confirmed during build against
   the live editor — the user's manual flow is the reference).
@@ -143,13 +153,18 @@ The app's own Save then writes the payload (verified shape in §2.2).
 
 ### 3.4 Patterns & storage
 
-- Defaults: `10`, `5-5`, `4-3-3`, `3-2-3-2`, `2-2-2-2-2` (the split-of-10 family) plus
-  `5`, `3-2` (5-page days).
-- Stored in `chrome.storage.sync` as a list of comma-separated positive integers.
+- **Storage is the single source of truth** for both dropdown sections (§3.2 uniform
+  options and §3.3 page patterns).
+- JSON shape: `chrome.storage.sync` → `patterns: string[]`, each element a
+  comma-separated list of positive integers, e.g. `["10", "5", "4-3-3", "3-2-3-2",
+  "2-2-2-2-2", "5-5", "3-2"]`. Single-number entries render as native worksheet
+  options; multi-number entries render as page-pattern buttons.
+- **Defaults shipped:** `10`, `5`, `4-3-3`, `3-2-3-2`, `2-2-2-2-2`, `5-5`, `3-2`
+  (the 10-page family plus the 5-page options).
 - Editor: extension options page (`chrome://extensions` → details → options) — add,
   remove, reorder patterns. NOT in the page (zero UI footprint).
-- Panel grouping: patterns grouped by their sum (10/day group, 5/day group, custom
-  sums as they appear).
+- Panel grouping: patterns grouped by sum (10/day group, 5/day group, other sums as
+  they appear).
 
 ### 3.5 Scope guard (v1)
 
@@ -168,24 +183,33 @@ monitoring app (separate spec).
 ## 5. Testing
 
 - Manual: load unpacked in Chrome + Edge; on a scratch set (created and deleted
-  after), verify: dropdown shows injected options; selecting 4-3-3 reshapes day
-  blocks; Save produces an `InsertSetInfoList` matching the pattern; the set renders
-  correctly after reload (GetStudyResultInfoList round-trip).
+  after), verify: dropdown shows injected options; clicking 4-3-3 reshapes all
+  10-page days into 4/3/3 blocks and leaves non-matching days untouched; Save
+  produces an `InsertSetInfoList` matching the pattern; the set renders correctly
+  after reload (GetStudyResultInfoList round-trip).
 - Regression: app's native 10/5 still work; other screens unaffected.
 - Unit (optional, if time): pattern parser (validation, grouping, expansion across N
   days).
 
 ## 6. Success criteria
 
-1. One click inside the existing dropdown applies 4-3-3 (or any configured pattern).
+1. One click inside the existing dropdown applies a pattern to every matching day
+   in the assignment period (e.g. all 10-page days become 4-3-3).
 2. No extra UI outside the dropdown; app's Save untouched; no extension writes.
 3. Patterns persist across sessions (sync storage).
 4. Works on Chrome and Edge.
 
-## 7. Open items (resolved during build)
+## 7. Open items (resolved during build — budget as upfront SPIKE tasks)
 
-- Exact day-block edit controls in the assignment editor (find the mechanism the user
-  uses manually; the HAR shows the result, not the gesture).
-- Whether uniform keys other than 10/5 flow through the app's save unchanged.
-- MAIN-world script necessity for Angular internals access (production build strips
-  `ng` debug API; `__ngContext__` traversal may be needed).
+The first three are design-shaping unknowns; the implementation plan must schedule
+spike tasks for them before feature work:
+
+1. **Day-block edit mechanism** — find the exact DOM controls/gestures the user's
+   manual block manipulation uses (the HAR shows the result, not the gesture). This
+   determines the whole §3.3 DOM strategy.
+2. **Uniform-key round-trip** — verify the app's save path accepts arbitrary
+   `minWorksheetUnitCount` keys (e.g. 4, 3, 2) with a scratch-set save + delete.
+3. **Angular internals access** — confirm whether `ng.getComponent` is available or
+   `__ngContext__` traversal is required (production build may strip debug API).
+4. **Pattern-sum edge cases** — behavior when a day's blocks can't be cleanly mapped
+   (e.g. day with mixed/odd blocks); default = skip if total ≠ pattern sum.
