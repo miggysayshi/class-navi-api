@@ -2,11 +2,16 @@
 // app's own authenticated proxies (getStudyResultInfoList + registerStudySetInfo)
 // with the verified Spike B payload recipe.
 //
+// Matching (v2 semantics, 2026-08-05):
+//   - Only days whose editable blocks are ALL full 10-page blocks (10, 20, 30, …)
+//     are changed. Custom-split days (5-5, 4-3-3, 2-2-2-2-2, mixed) are skipped
+//     — never re-flattened.
+//   - Each full-10 block is expanded: the pattern repeats to fill it (sum 10 →
+//     once per 10 pages, sum 5 → twice, …).
 // Matching runs against the RENDER MODEL (the page comp's studyUnits — the
 // user's live view, including unsaved drag-created blocks). Timestamps + guard
 // values come from a fresh proxy fetch per save (stale timestamps get the save
-// Excluded, ErrorSec "01"). Deterministic server-side replace per SSI.
-// Attaches to globalThis.QS.
+// Excluded, ErrorSec "01"). Attaches to globalThis.QS.
 var QS = globalThis.QS || (globalThis.QS = {});
 
 QS.blocks = (function () {
@@ -48,15 +53,36 @@ QS.blocks = (function () {
     return days;
   }
 
-  /** Sum of a day's block sizes. */
-  function dayTotal(day) {
-    let sum = 0;
-    for (const c of day.cells) {
-      const from = Number(c.WorksheetNOFrom);
-      const to = Number(c.WorksheetNOTo);
-      if (Number.isFinite(from) && Number.isFinite(to)) sum += to - from + 1;
+  /** Block size of a cell. */
+  function blockSize(c) {
+    const from = Number(c.WorksheetNOFrom);
+    const to = Number(c.WorksheetNOTo);
+    return Number.isFinite(from) && Number.isFinite(to) ? to - from + 1 : 0;
+  }
+
+  /**
+   * Candidate day = every editable block is a full 10-page block (10, 20, 30…).
+   * Already-formatted days (5-5, 4-3-3, …) fail this and are skipped.
+   */
+  function isCandidateDay(day) {
+    return QS.patterns.isFullTenBlocks(day.cells.map(blockSize));
+  }
+
+  /**
+   * The day's new block sizes: for each existing block (in worksheet order),
+   * the pattern repeated to fill it. Null when a block can't be filled.
+   */
+  function expandedSizes(day, pattern) {
+    const out = [];
+    const ordered = day.cells
+      .slice()
+      .sort((a, b) => Number(a.WorksheetNOFrom) - Number(b.WorksheetNOFrom));
+    for (const c of ordered) {
+      const sizes = QS.patterns.expandForBlock(blockSize(c), pattern);
+      if (!sizes) return null;
+      for (const s of sizes) out.push(s);
     }
-    return sum;
+    return out;
   }
 
   /** getStudyResultInfoList params the app itself uses. */
@@ -113,10 +139,14 @@ QS.blocks = (function () {
    * Reshape one render-model day via the app's own register proxy.
    * Fresh timestamp + guards are adopted per call. Returns { ok, errorSec, message }.
    */
-  async function applyPatternToDay(comp, day, blocks) {
+  async function applyPatternToDay(comp, day, pattern) {
     try {
       if (!comp.proxy || typeof comp.proxy.registerStudySetInfo !== "function") {
         return { ok: false, message: "registerStudySetInfo proxy unavailable" };
+      }
+      const sizes = expandedSizes(day, pattern);
+      if (!sizes) {
+        return { ok: false, message: `pattern does not divide the day's blocks evenly` };
       }
       // fresh timestamp + guards: every successful save advances the server's
       // NotDownloadLastUpdateTime — stale values get the save Excluded ("01")
@@ -132,18 +162,24 @@ QS.blocks = (function () {
         .map((c) => c.bindingData)
         .filter((bd) => bd && bd.StudyID)
         .map((bd) => ({ StudyID: bd.StudyID, StudySec: bd.StudySec || "1" }));
-      const start = Math.min(...day.cells.map((c) => Number(c.WorksheetNOFrom)));
-      let from = start;
-      const insertList = blocks.map((size) => {
-        const entry = {
-          StudyScheduleIndex: day.id,
-          WorksheetNOFrom: from,
-          WorksheetNOTo: from + size - 1,
-          GradingMethod: "1",
-        };
-        from += size;
-        return entry;
-      });
+      // expanded ranges: each original block (in worksheet order) is filled by
+      // the repeated pattern, starting at that block's WorksheetNOFrom
+      const insertList = [];
+      const ordered = day.cells
+        .slice()
+        .sort((a, b) => Number(a.WorksheetNOFrom) - Number(b.WorksheetNOFrom));
+      for (const c of ordered) {
+        let from = Number(c.WorksheetNOFrom);
+        for (const size of QS.patterns.expandForBlock(blockSize(c), pattern)) {
+          insertList.push({
+            StudyScheduleIndex: day.id,
+            WorksheetNOFrom: from,
+            WorksheetNOTo: from + size - 1,
+            GradingMethod: "1",
+          });
+          from += size;
+        }
+      }
       const payload = {
         SystemCountryCD: params.SystemCountryCD,
         CenterID: params.CenterID,
@@ -172,7 +208,7 @@ QS.blocks = (function () {
       // drag-created blocks the user has in the editor. In-place reshaping
       // keeps the grid accurate AND preserves their unsaved work — a later
       // app-Save stays idempotent for the days we already wrote.
-      reshapeCellsInModel(comp, day.id, blocks);
+      reshapeCellsInModel(comp, day.id, insertList);
       return { ok: true, errorSec };
     } catch (err) {
       return { ok: false, message: String(err && err.message ? err.message : err) };
@@ -180,11 +216,12 @@ QS.blocks = (function () {
   }
 
   /**
-   * Replace a day's editable cells in the page comp's studyUnits with pattern
-   * cells (same bindingData.id, ranges split per pattern). Zone-patched array
-   * methods trigger the grid re-render. Never throws.
+   * Replace a day's editable cells in the page comp's studyUnits with the
+   * already-built insert cells (same bindingData.id, ranges per the expanded
+   * pattern). Zone-patched array methods trigger the grid re-render.
+   * Never throws.
    */
-  function reshapeCellsInModel(comp, dayId, blocks) {
+  function reshapeCellsInModel(comp, dayId, insertList) {
     try {
       const units = comp.studyUnits;
       if (!Array.isArray(units)) return;
@@ -194,14 +231,13 @@ QS.blocks = (function () {
       if (dayCells.length === 0) return;
       const first = dayCells[0];
       const proto = Object.getPrototypeOf(first);
-      const start = Math.min(...dayCells.map((c) => Number(c.WorksheetNOFrom)));
-      let offset = 0;
+      // build pattern cells from the insert entries
       const keep = [];
-      for (const size of blocks) {
-        const from = start + offset;
-        const to = from + size - 1;
-        offset += size;
-        if (keep.length === 0) {
+      let firstDone = false;
+      for (const ins of insertList) {
+        const from = Number(ins.WorksheetNOFrom);
+        const to = Number(ins.WorksheetNOTo);
+        if (!firstDone) {
           first.WorksheetNOFrom = from;
           first.WorksheetNOTo = to;
           if (first.bindingData) {
@@ -209,6 +245,7 @@ QS.blocks = (function () {
             first.bindingData.to = to;
           }
           keep.push(first);
+          firstDone = true;
         } else {
           const c = proto ? Object.create(proto) : {};
           Object.assign(c, first, { WorksheetNOFrom: from, WorksheetNOTo: to });
@@ -233,32 +270,36 @@ QS.blocks = (function () {
   }
 
   /**
-   * Apply a pattern (e.g. "4-3-3") to every assignable day in the RENDER MODEL
-   * whose editable total equals the pattern's sum (e.g. 10). Returns
-   * { changed, results }.
+   * Apply a pattern (e.g. "4-3-3") to every assignable day made of full 10-page
+   * blocks. Custom-split days are skipped. Returns { changed, results }.
+   * opts.onProgress(done, total) fires before each day's save.
    */
-  async function applyPatternToMatchingDays(rawPattern, root) {
+  async function applyPatternToMatchingDays(rawPattern, root, opts) {
     try {
       const blocks = QS.patterns.parsePattern(rawPattern);
       if (!blocks) return { changed: 0, results: [] };
       const sum = QS.patterns.patternSum(blocks);
+      if (10 % sum !== 0) {
+        return { changed: 0, results: [{ message: `pattern sum ${sum} does not divide 10-page chunks` }] };
+      }
+      const onProgress = opts && typeof opts.onProgress === "function" ? opts.onProgress : null;
       const comp = findPageComp(root);
       if (!comp) return { changed: 0, results: [{ message: "editor component not found" }] };
-      const matchIds = daysFromRender(comp.studyUnits)
-        .filter((d) => dayTotal(d) === sum)
-        .map((d) => d.id);
+      const candidates = daysFromRender(comp.studyUnits).filter(isCandidateDay);
+      const total = candidates.length;
       let changed = 0;
       const results = [];
-      for (const id of matchIds) {
-        // re-derive the day from the CURRENT model (a previous save's refresh
-        // may have rebuilt it)
-        const day = daysFromRender(comp.studyUnits).find((d) => d.id === id);
+      for (let i = 0; i < candidates.length; i++) {
+        if (onProgress) onProgress(i + 1, total);
+        // re-derive the day from the CURRENT model (a previous save's in-place
+        // reshape replaced its cells)
+        const day = daysFromRender(comp.studyUnits).find((d) => d.id === candidates[i].id);
         if (!day) {
-          results.push({ id, ok: false, message: "day not in model anymore" });
+          results.push({ id: candidates[i].id, ok: false, message: "day not in model anymore" });
           continue;
         }
         const res = await applyPatternToDay(comp, day, blocks);
-        results.push({ id, ...res });
+        results.push({ id: day.id, ...res });
         if (res.ok) changed++;
       }
       return { changed, results };

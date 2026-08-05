@@ -42,7 +42,10 @@ async function boot() {
     }
     QS.dropdown.injectPatternSection(patterns, async (raw) => {
       try {
-        const result = await QS.blocks.applyPatternToMatchingDays(raw);
+        const result = await QS.blocks.applyPatternToMatchingDays(raw, null, {
+          onProgress: (done, total) => QS.dropdown.setPatternProgress({ done, total, label: raw }),
+        });
+        QS.dropdown.clearPatternProgress();
         if (result.changed > 0) {
           console.log(`[QuickSet] applied ${raw} to ${result.changed} day(s)`);
         } else {
@@ -54,6 +57,7 @@ async function boot() {
           }
         }
       } catch (e) {
+        QS.dropdown.clearPatternProgress();
         console.warn("[QuickSet] pattern application failed:", e);
       }
     });

@@ -36,5 +36,26 @@ QS.patterns = (function () {
     for (let i = 0; i < dayCount; i++) out.push(blocks[i % blocks.length]);
     return out;
   }
-  return { parsePattern, patternSum, isValidPattern, groupPatternsBySum, expandAcrossDays };
+  /**
+   * True when every block size is a full 10-page block (10, 20, 30, …).
+   * Custom-split days (5-5, 4-3-3, 2-2-2-2-2, mixed) fail this — they are
+   * already formatted and must be skipped, never re-flattened.
+   */
+  function isFullTenBlocks(blockSizes) {
+    return blockSizes.length > 0 && blockSizes.every((s) => s >= 10 && s % 10 === 0);
+  }
+  /**
+   * Repeat the pattern to fill a full-10 block (pattern sum 10 → once, sum 5 →
+   * twice, …). Returns the expanded size list, or null when the pattern sum
+   * does not divide the block size evenly (e.g. sum 7 in a 10-block).
+   */
+  function expandForBlock(blockSize, pattern) {
+    const sum = patternSum(pattern);
+    if (sum <= 0 || blockSize % sum !== 0) return null;
+    const reps = blockSize / sum;
+    const out = [];
+    for (let r = 0; r < reps; r++) for (const b of pattern) out.push(b);
+    return out;
+  }
+  return { parsePattern, patternSum, isValidPattern, groupPatternsBySum, expandAcrossDays, isFullTenBlocks, expandForBlock };
 })();

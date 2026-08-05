@@ -1,7 +1,7 @@
 // test/patterns.test.js
 import { test, expect } from "bun:test";
 await import("../src/patterns.js");
-const { parsePattern, patternSum, isValidPattern, groupPatternsBySum, expandAcrossDays } =
+const { parsePattern, patternSum, isValidPattern, groupPatternsBySum, expandAcrossDays, isFullTenBlocks, expandForBlock } =
   globalThis.QS.patterns;
 
 test("parsePattern parses and validates", () => {
@@ -43,4 +43,27 @@ test("groupPatternsBySum skips invalid entries", () => {
 test("expandAcrossDays repeats pattern to cover N days", () => {
   expect(expandAcrossDays([4, 3, 3], 6)).toEqual([4, 3, 3, 4, 3, 3]);
   expect(expandAcrossDays([4, 3, 3], 2)).toEqual([4, 3]);
+});
+
+test("isFullTenBlocks — only days made of full 10-page blocks qualify", () => {
+  expect(isFullTenBlocks([10])).toBe(true);
+  expect(isFullTenBlocks([10, 20])).toBe(true);
+  expect(isFullTenBlocks([40])).toBe(true);
+  expect(isFullTenBlocks([])).toBe(false);
+  expect(isFullTenBlocks([5])).toBe(false); // 5-5 style day
+  expect(isFullTenBlocks([4, 3, 3])).toBe(false); // already 4-3-3
+  expect(isFullTenBlocks([2, 2, 2, 2, 2])).toBe(false); // already 2-2-2-2-2
+  expect(isFullTenBlocks([10, 5])).toBe(false); // mixed
+  expect(isFullTenBlocks([15])).toBe(false); // not a multiple of 10
+});
+
+test("expandForBlock fills a full-10 block by repeating the pattern", () => {
+  expect(expandForBlock(10, [4, 3, 3])).toEqual([4, 3, 3]);
+  expect(expandForBlock(20, [4, 3, 3])).toEqual([4, 3, 3, 4, 3, 3]);
+  expect(expandForBlock(30, [4, 3, 3])).toEqual([4, 3, 3, 4, 3, 3, 4, 3, 3]);
+  expect(expandForBlock(10, [3, 2])).toEqual([3, 2, 3, 2]);
+  expect(expandForBlock(10, [5, 5])).toEqual([5, 5]);
+  expect(expandForBlock(20, [5])).toEqual([5, 5, 5, 5]);
+  expect(expandForBlock(10, [7])).toBeNull(); // 10 % 7 !== 0
+  expect(expandForBlock(10, [4, 4])).toBeNull(); // 8 does not divide 10
 });

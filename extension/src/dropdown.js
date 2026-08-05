@@ -38,6 +38,8 @@ QS.dropdown = (function () {
       const section = document.createElement("div");
       section.className = "qs-pattern-section setting-options";
       section.style.cssText = "padding:8px 12px;border-top:1px solid #d9e2e6;";
+      let busy = false;
+      const allBtns = [];
       for (const g of groups) {
         const label = document.createElement("div");
         label.textContent = `${g.sum} pages / day`;
@@ -57,9 +59,18 @@ QS.dropdown = (function () {
           btn.className = "qs-pattern-btn setting-options";
           btn.style.cssText =
             "padding:3px 10px;border:1px solid #2a6df4;border-radius:12px;background:#fff;color:#2a6df4;cursor:pointer;font-size:12px;";
-          btn.addEventListener("click", () => {
-            if (typeof onPick === "function") onPick(raw);
+          btn.addEventListener("click", async () => {
+            if (busy) return;
+            busy = true;
+            try {
+              for (const b of allBtns) b.disabled = true;
+              if (typeof onPick === "function") await onPick(raw);
+            } finally {
+              busy = false;
+              for (const b of allBtns) b.disabled = false;
+            }
           });
+          allBtns.push(btn);
           row.appendChild(btn);
         }
         section.appendChild(row);
@@ -73,5 +84,51 @@ QS.dropdown = (function () {
     }
   }
 
-  return { injectUniformOptions, injectPatternSection };
+  /**
+   * Show/update the progress bar inside the pattern section while days are
+   * being reshaped. done/total = day index out of total; label = the pattern.
+   */
+  function setPatternProgress(progress) {
+    try {
+      const section = document.querySelector(".qs-pattern-section");
+      if (!section) return;
+      let bar = section.querySelector(".qs-pattern-progress");
+      if (!bar) {
+        bar = document.createElement("div");
+        bar.className = "qs-pattern-progress setting-options";
+        bar.style.cssText =
+          "margin-top:8px;border:1px solid #d9e2e6;border-radius:4px;height:18px;position:relative;background:#f2f6f8;overflow:hidden;";
+        const fill = document.createElement("div");
+        fill.className = "qs-pattern-progress-fill";
+        fill.style.cssText =
+          "height:100%;width:0%;background:#2a6df4;transition:width .25s ease;";
+        const txt = document.createElement("div");
+        txt.className = "qs-pattern-progress-text";
+        txt.style.cssText =
+          "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:#1c3a5e;";
+        bar.appendChild(fill);
+        bar.appendChild(txt);
+        section.appendChild(bar);
+      }
+      const done = Math.max(0, Math.min(progress.total || 1, progress.done || 0));
+      const total = progress.total || 1;
+      bar.querySelector(".qs-pattern-progress-fill").style.width = `${Math.round((done / total) * 100)}%`;
+      bar.querySelector(".qs-pattern-progress-text").textContent =
+        `${progress.label || ""} — day ${done} of ${total}`;
+    } catch (err) {
+      /* best-effort */
+    }
+  }
+
+  /** Remove the progress bar. */
+  function clearPatternProgress() {
+    try {
+      const bar = document.querySelector(".qs-pattern-progress");
+      if (bar) bar.remove();
+    } catch (err) {
+      /* best-effort */
+    }
+  }
+
+  return { injectUniformOptions, injectPatternSection, setPatternProgress, clearPatternProgress };
 })();
