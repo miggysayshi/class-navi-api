@@ -166,17 +166,69 @@ QS.blocks = (function () {
       if (resultCode !== 0 || errorSec !== "00") {
         return { ok: false, errorSec, message: `save rejected (ResultCode ${resultCode}, ErrorSec ${errorSec})` };
       }
-      // refresh the grid + model through the app's own post-save path
-      if (typeof comp.updateCurViewDataAfterWorksheetChange === "function") {
-        try {
-          await comp.updateCurViewDataAfterWorksheetChange();
-        } catch (e) {
-          /* best-effort */
-        }
-      }
+      // reshape the MODEL CELLS in place so the grid shows the new pattern.
+      // NEVER call the app's refresh (updateCurViewDataAfterWorksheetChange):
+      // it rebuilds the model from server data and WIPES any other unsaved
+      // drag-created blocks the user has in the editor. In-place reshaping
+      // keeps the grid accurate AND preserves their unsaved work — a later
+      // app-Save stays idempotent for the days we already wrote.
+      reshapeCellsInModel(comp, day.id, blocks);
       return { ok: true, errorSec };
     } catch (err) {
       return { ok: false, message: String(err && err.message ? err.message : err) };
+    }
+  }
+
+  /**
+   * Replace a day's editable cells in the page comp's studyUnits with pattern
+   * cells (same bindingData.id, ranges split per pattern). Zone-patched array
+   * methods trigger the grid re-render. Never throws.
+   */
+  function reshapeCellsInModel(comp, dayId, blocks) {
+    try {
+      const units = comp.studyUnits;
+      if (!Array.isArray(units)) return;
+      const dayCells = units.filter(
+        (u) => u && u.bindingData && u.bindingData.id === dayId && String(u.DeleteFlg) === "0" && u.editable !== false
+      );
+      if (dayCells.length === 0) return;
+      const first = dayCells[0];
+      const proto = Object.getPrototypeOf(first);
+      const start = Math.min(...dayCells.map((c) => Number(c.WorksheetNOFrom)));
+      let offset = 0;
+      const keep = [];
+      for (const size of blocks) {
+        const from = start + offset;
+        const to = from + size - 1;
+        offset += size;
+        if (keep.length === 0) {
+          first.WorksheetNOFrom = from;
+          first.WorksheetNOTo = to;
+          if (first.bindingData) {
+            first.bindingData.from = from;
+            first.bindingData.to = to;
+          }
+          keep.push(first);
+        } else {
+          const c = proto ? Object.create(proto) : {};
+          Object.assign(c, first, { WorksheetNOFrom: from, WorksheetNOTo: to });
+          c.bindingData = Object.assign({}, first.bindingData, { from, to, lastFrom: from, lastTo: to });
+          keep.push(c);
+        }
+      }
+      // remove the day's other cells, insert the extra pattern cells at the
+      // first cell's position
+      const firstIdx = units.indexOf(first);
+      for (const c of dayCells) {
+        if (c === first) continue;
+        const i = units.indexOf(c);
+        if (i >= 0) units.splice(i, 1);
+      }
+      if (firstIdx >= 0) {
+        for (let i = keep.length - 1; i >= 1; i--) units.splice(firstIdx, 0, keep[i]);
+      }
+    } catch (e) {
+      /* best-effort */
     }
   }
 
