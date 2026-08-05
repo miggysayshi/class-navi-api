@@ -1,1 +1,71 @@
-// src/content-main.js — implemented in a later task
+// src/content-main.js — MAIN world: detects the worksheets-per-study dropdown,
+// boots the injection, and re-injects per panel (SPA navigation creates a new
+// panel per student)
+var QS = globalThis.QS || (globalThis.QS = {});
+let currentPanel = null;
+
+function requestPatterns() {
+  return new Promise((resolve) => {
+    const onMsg = (event) => {
+      if (event.source !== window) return;
+      if (event.data && event.data.type === "qs:patterns") {
+        window.removeEventListener("message", onMsg);
+        resolve(event.data.patterns);
+      }
+    };
+    window.addEventListener("message", onMsg);
+    window.postMessage({ type: "qs:request-patterns" }, "*");
+    setTimeout(() => {
+      window.removeEventListener("message", onMsg);
+      resolve(null);
+    }, 2000);
+  });
+}
+
+async function getPatternsWithRetry() {
+  let patterns = await requestPatterns();
+  if (!patterns) {
+    // ISOLATED listener may not be registered yet (cross-world task ordering)
+    await new Promise((r) => setTimeout(r, 300));
+    patterns = await requestPatterns();
+  }
+  if (!patterns) console.warn("[QuickSet] pattern bridge timed out — nothing injected.");
+  return patterns;
+}
+
+async function boot() {
+  try {
+    const patterns = await getPatternsWithRetry();
+    if (!patterns) return;
+    const injected = QS.dropdown.injectUniformOptions(patterns);
+    if (!injected && !QS.angular.findMinWorksheetCountList()) {
+      console.warn("[QuickSet] Angular component not found — injection disabled on this screen.");
+    }
+    QS.dropdown.injectPatternSection(patterns, (raw) => {
+      try {
+        const n = QS.blocks.applyPatternToMatchingDays(raw);
+        console.log(`[QuickSet] applied ${raw} to ${n} day(s)`);
+      } catch (e) {
+        console.warn("[QuickSet] pattern application failed:", e);
+      }
+    });
+  } catch (err) {
+    // spec §4: never throw into the page
+    console.warn("[QuickSet] boot failed:", err);
+  }
+}
+
+// SPA navigation re-creates the panel per student — re-inject per NEW panel
+// element, debounced; never a one-shot flag
+let debounce = null;
+const mo = new MutationObserver(() => {
+  clearTimeout(debounce);
+  debounce = setTimeout(() => {
+    const panel = document.querySelector(".options.setting-options");
+    if (panel && panel !== currentPanel) {
+      currentPanel = panel;
+      boot();
+    }
+  }, 250);
+});
+mo.observe(document.documentElement, { childList: true, subtree: true });
