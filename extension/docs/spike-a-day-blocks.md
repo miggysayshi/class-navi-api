@@ -79,7 +79,38 @@ GradingMethod:"1"}, {13, 45–47}, {13, 48–50}]`, `DeleteSetInfoList: []`,
 `NotDownloadLastUpdateTime`, `NotUpdateMaxStudyScheduleIndex: 11`,
 `NotUpdateMaxWorksheetNO: 75` (+ client block, id).
 
-## 6. Open items for implementation
+## 7. Grip-drag synthesis verification (Task 9 — 2026-08-05)
+
+- Synthesized drags DO NOT work: pointerdown/move/up and mousedown/move/up sequences
+  on `leftGrip`/`rightGrip` elements and on the bars themselves did not move a
+  block. CDK-style drag is not drivable via dispatched synthetic events in this
+  app build. Drag synthesis is NOT a viable mechanism.
+- The working mechanism (live-verified): mutate the **page component's**
+  `studyUnits` array (NOT the grid component's render copy — they are separate
+  arrays; the grid's is a derived render list, the page's is what Save reads):
+  1. Mutate the first cell of the target day (`WorksheetNOFrom/To` +
+     `bindingData.from/to/lastFrom/lastTo`), push clones (same prototype, same
+     `bindingData.StudyID`/`id`) for the remaining blocks, splice out the old
+     cells of that day (`bindingData.id` = StudyScheduleIndex).
+  2. Call the page comp's `checkDiff()` — it compares `studyUnits` against
+     `firstStudyUnits`; changed length/contents flips `confirmBtnDisabled` to
+     false, enabling the app's Save button.
+  3. The app's Save diff (bundle `registerStudySetInfo`) emits
+     `InsertSetInfoList` entries for every current unit without an exact
+     `initStudyUnit` match — mutated blocks land in the payload with
+     `StudyScheduleIndex = bindingData.id`.
+- Verified in-app: reshape of a 10-page day (91-100) into [4-3-3] rendered in
+  the grid (49 cells) with the model showing 91-94/95-97/98-100, and
+  `checkDiff()` flipped `confirmBtnDisabled` to false.
+- NOTE: console-driven tests can't tick Angular's change detection (no zone),
+  so the DOM Save button stays visually disabled in console tests — in real
+  usage the user's clicks run inside Angular's zone and CD happens naturally.
+- IMPORTANT student-ID correction: the morning 4-3-3 HAR and all Spike B data
+  belong to **Lainey Valerene Abella (StudentID 8402350372837, ClassStudentSeq
+  12)** — NOT Noah Grigoryan (8402640414247, seq 69). The two share the first
+  name; the Set List first row is Noah. Always match by StudentID.
+
+## 8. Open items for implementation (resolved)
 
 1. Off-by-one: DOM row index vs payload `StudyScheduleIndex`.
 2. What triggers grid re-render after data mutation (markForCheck? zone tick?).
