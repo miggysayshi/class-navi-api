@@ -4,3 +4,5 @@ node_modules/
 *.har.gz
 .DS_Store
 captures/
+
+.superpowers/
