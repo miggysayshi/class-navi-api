@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Class-Navi Quick Set",
+  "version": "0.1.0",
+  "description": "More assignment patterns (4-3-3, 3-2-3-2, ...) in the Class-Navi worksheets-per-study dropdown.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://class-navi.digital.kumon.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://class-navi.digital.kumon.com/*"],
+      "js": [
+        "src/patterns.js",
+        "src/lib.js",
+        "src/angular-hooks.js",
+        "src/day-blocks.js",
+        "src/dropdown.js",
+        "src/content-main.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://class-navi.digital.kumon.com/*"],
+      "js": ["src/patterns.js", "src/storage.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}
