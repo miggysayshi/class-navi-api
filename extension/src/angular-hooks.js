@@ -20,11 +20,13 @@ QS.angular = (function () {
 
   /**
    * Walk up from the element matching sel (max 12 levels) looking for a
-   * component whose lView holds any of props. Never throws; null on failure.
+   * component whose lView holds any of props. sel may be a CSS selector string
+   * (resolved from root/document) OR an Element (walked from directly).
+   * Never throws; null on failure.
    */
   function findComp(sel, props, root) {
     try {
-      let el = (root || document).querySelector(sel);
+      let el = typeof sel === "string" ? (root || document).querySelector(sel) : sel;
       let d = 0;
       while (el && d < MAX_PARENT_DEPTH) {
         const ctx = el.__ngContext__;
