@@ -36,20 +36,25 @@ QS.dropdown = (function () {
         patterns.filter((raw) => (QS.patterns.parsePattern(raw) || []).length > 1), // splits only
       );
       const section = document.createElement("div");
-      section.className = "qs-pattern-section";
+      section.className = "qs-pattern-section setting-options";
       section.style.cssText = "padding:8px 12px;border-top:1px solid #d9e2e6;";
       for (const g of groups) {
         const label = document.createElement("div");
         label.textContent = `${g.sum} pages / day`;
+        label.className = "qs-pattern-label setting-options";
         label.style.cssText = "font-size:11px;color:#5b7a86;margin:6px 0 4px;";
         section.appendChild(label);
         const row = document.createElement("div");
+        row.className = "qs-pattern-row setting-options";
         row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;";
         for (const raw of g.patterns) {
           const btn = document.createElement("button");
           btn.type = "button";
           btn.textContent = raw;
-          btn.className = "qs-pattern-btn";
+          // "setting-options" in the class is REQUIRED: the app's onMousedown
+          // closes the dropdown unless the target's class contains it — without
+          // this, the panel dies on mousedown and our click never fires
+          btn.className = "qs-pattern-btn setting-options";
           btn.style.cssText =
             "padding:3px 10px;border:1px solid #2a6df4;border-radius:12px;background:#fff;color:#2a6df4;cursor:pointer;font-size:12px;";
           btn.addEventListener("click", () => {
