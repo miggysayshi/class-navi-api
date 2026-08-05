@@ -171,8 +171,12 @@ QS.blocks = (function () {
     try {
       const el = (root || document).querySelector(".setStudyUnitEditorContainer, study-unit-editor");
       if (!el) return null;
-      const found = findCompFrom(el, ["studyUnits", "checkDiff"]);
-      return found ? found.comp : null;
+      // "checkDiff" uniquely identifies the PAGE component (the grid component
+      // also exposes studyUnits and sits closer in the DOM walk — searching for
+      // studyUnits first would grab the grid comp and leave Save disabled)
+      const found = findCompFrom(el, ["checkDiff"]);
+      if (!found || !Array.isArray(found.comp.studyUnits)) return null;
+      return found.comp;
     } catch (e) {
       return null;
     }
