@@ -11,10 +11,12 @@ worksheet blocks — no extra panels, no new UI surfaces.
 - **Uniform options**: adds `4`, `3`, `2 worksheets per study` to the dropdown
   (native values 10 and 5 stay first).
 - **Page patterns**: a "`N` pages / day" section lists your patterns. Clicking
-  one (e.g. `4-3-3`) finds every assignable day whose editable blocks total
-  `N` (e.g. 10) and splits each into the pattern's blocks (e.g. 41-44, 45-47,
-  48-50) — including days you just created by dragging in the editor and have
-  **not saved yet**.
+  one (e.g. `4-3-3`) reshapes every day whose editable blocks are **full
+  10-page blocks** (10, 20, 30, …): a 10-block becomes the pattern once, a
+  20-block becomes it twice, and so on. Days that are **already split** (5-5,
+  4-3-3, 2-2-2-2-2, mixed) are **skipped — never re-flattened**. Unsaved
+  drag-created blocks count too (matching runs against your live view). A
+  progress bar in the dropdown shows each day being edited.
 - Patterns are editable on the extension's **options page** (10 and 5 are
   read-only native values).
 
@@ -89,11 +91,11 @@ Covers pattern parsing/grouping (Task 5) and the storage layer (Task 6).
 
 ## Known limitations
 
-- Matching is per-day-total: a day with mixed studied + editable blocks only
-  counts the editable ones. A day whose editable total ≠ the pattern sum is
-  left untouched.
-- Reshaping replaces the whole day's editable blocks with the pattern (the
-  studied portion is never touched).
+- Matching is per-day: only days where **every** editable block is a full
+  10-page block (10/20/30…) qualify. Mixed days (e.g. one 10-block plus a 5-5)
+  and already-split days are left untouched.
+- Reshaping replaces the whole day's editable blocks with the repeated pattern
+  (the studied portion is never touched).
 - The dropdown's `setting-options` class check is app-internal behavior —
   if Kumon changes it, pattern clicks stop working (diagnosable via the
   console: `[QuickSet]` logs).
