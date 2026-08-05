@@ -29,11 +29,13 @@ test("defaults include the shipped pattern set", () => {
   expect(DEFAULT_PATTERNS).toContain("5");
 });
 
-test("loadPatterns returns defaults when nothing stored", async () => {
+test("loadPatterns returns defaults when nothing stored (first-run seed)", async () => {
   expect(await loadPatterns()).toEqual(DEFAULT_PATTERNS);
+  // seeding persists so the user's list becomes authoritative afterwards
+  expect(store.patterns).toEqual(DEFAULT_PATTERNS);
 });
 
-test("loadPatterns merges stored + defaults and filters invalid entries", async () => {
+test("loadPatterns merges stored + native 10/5, filters invalid, keeps removals removed", async () => {
   store.patterns = ["4-3-3", "bad pattern", "3-2", ""];
   const result = await loadPatterns();
   expect(result).toContain("4-3-3");
@@ -43,6 +45,15 @@ test("loadPatterns merges stored + defaults and filters invalid entries", async 
   // native read-only keys always present
   expect(result).toContain("10");
   expect(result).toContain("5");
+  // non-native defaults the user removed stay removed
+  expect(result).not.toContain("5-5");
+  expect(result).not.toContain("2-2-2-2-2");
+});
+
+test("loadPatterns tolerates a non-array stored value", async () => {
+  store.patterns = "10";
+  const result = await loadPatterns();
+  expect(result).toEqual(["10", "5"]);
 });
 
 test("savePatterns stores and validates", async () => {
@@ -55,4 +66,5 @@ test("removing defaults in the editor still re-merges native 10/5 on load", asyn
   const result = await loadPatterns();
   expect(result).toContain("10");
   expect(result).toContain("5");
+  expect(result).toEqual(["4-3-3", "10", "5"]); // removed defaults stay removed
 });
