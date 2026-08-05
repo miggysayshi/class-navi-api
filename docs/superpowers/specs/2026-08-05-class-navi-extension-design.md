@@ -180,7 +180,10 @@ monitoring app (separate spec).
   disables injection gracefully — never throws into the page.
 - Invalid patterns (non-positive ints, empty) are rejected by the options editor.
 - No server writes by the extension itself in v1 — the app's Save always does the
-  write; the extension only fills UI state.
+  write; the extension only fills UI state. **REVISED 2026-08-05 (approved):**
+  the extension saves through the app's own authenticated `registerStudySetInfo`
+  proxy (deterministic payload; the app's Save-diff proved unreliable against
+  real data). See README security note.
 
 ## 5. Testing
 
