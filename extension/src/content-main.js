@@ -7,11 +7,10 @@ let currentPanel = null;
 function requestPatterns() {
   return new Promise((resolve) => {
     const onMsg = (event) => {
-      if (event.source !== window) return;
-      if (event.data && event.data.type === "qs:patterns") {
-        window.removeEventListener("message", onMsg);
-        resolve(event.data.patterns);
-      }
+      const data = event && event.data;
+      if (!data || typeof data !== "object" || data.type !== "qs:patterns") return;
+      window.removeEventListener("message", onMsg);
+      resolve(data.patterns);
     };
     window.addEventListener("message", onMsg);
     window.postMessage({ type: "qs:request-patterns" }, "*");
