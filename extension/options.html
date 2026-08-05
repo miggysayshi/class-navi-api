@@ -1,1 +1,32 @@
-<!-- options.html — placeholder; implemented in Task 7 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Class-Navi Quick Set — Options</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; color: #1f2937; background: #f9fafb; max-width: 560px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; }
+    p { color: #4b5563; }
+    .row { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0; border-bottom: 1px solid #e5e7eb; }
+    .row span { flex: 1; }
+    .row .native { color: #6b7280; font-size: 0.85em; }
+    button { font: inherit; cursor: pointer; padding: 0.15rem 0.5rem; }
+    .add { display: flex; gap: 0.5rem; margin-top: 1rem; }
+    input { flex: 1; padding: 0.35rem 0.5rem; font: inherit; }
+    #error { color: #b91c1c; min-height: 1.2em; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Class-Navi Quick Set — Patterns</h1>
+  <p>Patterns shown in the Class-Navi dropdown. Native options can't be removed or reordered.</p>
+  <div id="pattern-list"></div>
+  <div class="add">
+    <input id="pattern-input" type="text" placeholder="e.g. 4-3-3" />
+    <button id="add-btn">Add</button>
+  </div>
+  <div id="error"></div>
+  <script src="src/patterns.js"></script>
+  <script src="src/storage.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
