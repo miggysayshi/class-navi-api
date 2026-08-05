@@ -44,7 +44,7 @@ extension/
 
 **Script-loading order (manifest arrays = dependency order):**
 - MAIN entry: `patterns.js`, `lib.js`, `angular-hooks.js`, `day-blocks.js`, `dropdown.js`, `content-main.js`
-- ISOLATED entry: `storage.js`, `content.js`
+- ISOLATED entry: `patterns.js`, `storage.js`, `content.js`
 
 ## Spike tasks first
 
@@ -132,7 +132,7 @@ as RTF (convert with `textutil -convert txt` before parsing).
     },
     {
       "matches": ["https://class-navi.digital.kumon.com/*"],
-      "js": ["src/storage.js", "src/content.js"],
+      "js": ["src/patterns.js", "src/storage.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],
@@ -186,7 +186,7 @@ test("isValidPattern accepts only comma/hyphen separated positive ints", () => {
 test("groupPatternsBySum groups and orders by sum", () => {
   const groups = groupPatternsBySum(["10", "5-5", "4-3-3", "5", "3-2"]);
   expect(groups.map((g) => g.sum)).toEqual([5, 10]);
-  expect(groups[1].patterns).toEqual(["5-5", "4-3-3"]);
+  expect(groups[1].patterns).toEqual(["10", "5-5", "4-3-3"]); // insertion order
 });
 
 test("expandAcrossDays repeats pattern to cover N days", () => {
@@ -641,16 +641,21 @@ async function getPatternsWithRetry() {
 }
 
 async function boot() {
-  const patterns = await getPatternsWithRetry();
-  if (!patterns) return;
-  const injected = QS.dropdown.injectUniformOptions(patterns);
-  if (!injected && !QS.angular.findMinWorksheetCountList()) {
-    console.warn("[QuickSet] Angular component not found — injection disabled on this screen.");
+  try {
+    const patterns = await getPatternsWithRetry();
+    if (!patterns) return;
+    const injected = QS.dropdown.injectUniformOptions(patterns);
+    if (!injected && !QS.angular.findMinWorksheetCountList()) {
+      console.warn("[QuickSet] Angular component not found — injection disabled on this screen.");
+    }
+    QS.dropdown.injectPatternSection(patterns, (raw) => {
+      const n = QS.blocks.applyPatternToMatchingDays(raw);
+      console.log(`[QuickSet] applied ${raw} to ${n} day(s)`);
+    });
+  } catch (err) {
+    // spec §4: never throw into the page
+    console.warn("[QuickSet] boot failed:", err);
   }
-  QS.dropdown.injectPatternSection(patterns, (raw) => {
-    const n = QS.blocks.applyPatternToMatchingDays(raw);
-    console.log(`[QuickSet] applied ${raw} to ${n} day(s)`);
-  });
 }
 
 // SPA navigation re-creates the panel per student — re-inject per NEW panel element,
@@ -670,7 +675,7 @@ mo.observe(document.documentElement, { childList: true, subtree: true });
 ```
 
 - [ ] **Step 3: Manual end-to-end on a scratch set**
-  Load unpacked. In the options page, confirm defaults include `4-3-3`. Create a scratch set via the UI for the test student (or via the API client per Spike B) with several 10-page days. Open the gear dropdown; click `4-3-3`. Verify: every 10-page day reshaped to 4/3/3 blocks, non-matching days untouched. Click the app's **Save**; then read back via `~/class-navi-api`: `bun run src/index.ts call GetStudyResultInfoList '{"StudentID":"...","SubjectCD":"010","WorksheetCD":"...","SystemCountryCD":"USA","CenterID":"00981474","ClassID":"00981475","ClassStudentSeq":...}'` and confirm 3 blocks per day in the set data. Then delete the scratch set (API client `RegisterStudySetInfo` with `DeleteSetInfoList`, or the UI delete). Record payload evidence in the commit message. Commit (`feat: day-block pattern application`).
+  Load unpacked. In the options page, confirm defaults include `4-3-3`. Create a scratch set via the UI for the test student (or via the API client per Spike B) with several 10-page days. Open the gear dropdown; click `4-3-3`. Verify: every 10-page day reshaped to 4/3/3 blocks, non-matching days untouched. Click the app's **Save**; then read back via `~/class-navi-api`: `bun run src/index.ts call GetStudyResultInfoList '{"StudentID":"...","SubjectCD":"010","WorksheetCD":"...","SystemCountryCD":"USA","CenterID":"00981474","ClassID":"00981475","ClassStudentSeq":...}'` and confirm 3 blocks per day in the set data. Then delete the scratch set (API client `RegisterStudySetInfo` with `DeleteSetInfoList`, or the UI delete). NOTE: the `StudentID`/`WorksheetCD`/`ClassStudentSeq` in the read-back command come from the scratch set created in this step. Record payload evidence in the commit message. Commit (`feat: day-block pattern application`).
 
 ### Task 10: Cross-browser + regression pass
 
