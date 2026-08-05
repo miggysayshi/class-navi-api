@@ -57,10 +57,20 @@ addBtn.onclick = async () => {
   }
   errorEl.textContent = "";
   const patterns = await QS.storage.loadPatterns();
-  if (!patterns.includes(raw)) patterns.push(raw);
+  if (patterns.includes(raw)) {
+    errorEl.textContent = `"${raw}" is already in the list.`;
+    inputEl.value = "";
+    return;
+  }
+  patterns.push(raw);
   await QS.storage.savePatterns(patterns);
   inputEl.value = "";
   render();
 };
+
+// Enter in the input adds the pattern (no form on this page)
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") addBtn.onclick();
+});
 
 render();
