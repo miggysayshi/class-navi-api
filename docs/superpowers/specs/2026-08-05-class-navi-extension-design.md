@@ -120,7 +120,9 @@ push, and let Angular re-render. The app's existing selection flow handles the r
 
 **Storage is the single source of truth** — the injected uniform options are generated
 from the stored pattern list (every stored single-number pattern becomes a native
-option; removing it in the editor removes it from the dropdown).
+option; removing it in the editor removes it from the dropdown). **Injection skips
+keys already present in the native list** (the app's built-in 10 and 5 are never
+duplicated); defaults 10/5 are mirrored read-only in the editor.
 
 **Open question (verify during build):** whether the app's save path accepts arbitrary
 `key` values (server-side it is block-list based, so it should; verify with a live
