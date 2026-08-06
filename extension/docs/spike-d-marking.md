@@ -56,7 +56,47 @@ Comments:
 - On-page annotations: `RedComment` (red-pen ink, base64/zip) + `TagComment` +
   `SoundComment` + `SoundRecord` — the "pen" layer. `getMemoImage`.
 
-## Design implications
+## Complete mechanism (bundle-verified 2026-08-05)
+
+### Right/mark enum (`qr`) + answer model
+- `qr = { Default: 0, Incorrect: 1, Right: 2, Triangle: 3, TriangleE: 4, … }`
+- Each question's answer attempts: `AnswerRightList[]`, attempt =
+  `{ AutoRight, ManualRight, Right }` (all qr codes; `AutoRight` = machine auto-grade,
+  `Right` = instructor's mark). `defaultAnswerRight()` = `{AutoRight:0, ManualRight:qr.Default, Right:qr.Default}`.
+- Mark-box visibility (`getMarkBox`): a question shows a mark box when the LAST
+  attempt is not (Right && previous also Right) — i.e. auto-correct double-right
+  questions get no box.
+
+### Save path (authoritative)
+- Screen keeps per-worksheet `scoringResultData = { score, gradingTime,
+  gradingResultData, redCommentList, gradingEvaluationTime }` in each study set.
+- `registerEndScoring` (the app's own flow) assembles per worksheet:
+  `{ WorksheetNO, CorrectionCount: last.CorrectionCount,
+     GradingResultData: zip(JSON.stringify(gradingResultData)),
+     RedComment: zip(joinInkData(redCommentList)), Score, GraderID,
+     GradingDate, GradingTime, GradingEvaluationTime }`
+  then `registerScore({ ...setData, SystemCountryCD, InstructorID,
+  InstructorAssistantSec, GradingWorksheetInfoList })`.
+- **Extension strategy: mutate the model (`Right` codes), then call the app's
+  own save flow — never touch the wire directly.**
+
+### Typed on-page comment
+- The ink SDK (`InkTool.InkCanvasLib`, wrapped as `Mi`) supports TEXT elements:
+  `Mi.addTextDataToInkData(inkData, pageIndex, text, x, y, options, …)` (wrapper
+  subtracts 1 from pageIndex). RedComment ink container = `{ps: [pageInk…]}`
+  (`joinInkData`).
+- Typed comment = add a text element to the current page's red-comment ink at
+  the clicked coordinates → renders like pen text → saved with the grade.
+- Also available: `getTextDataAllFromInkData`, `addTextDataToCanvas`.
+
+### Marking screen notes
+- Display IDs seen in bundle: `ATD0010P` (editor), `ATD0020P` (score display?),
+  `ATX0020P` (start-score error page). Marking screen ID TBD (verify live).
+- Screen per-page model: `{ imgSrc, inkData, resultBoxs, scoreList, answers,
+  type }`; `redCommentStroke` (recording red pen strokes); keyboard answer
+  container exists (typed answers supported natively).
+
+## Design implications (extension v2 features)
 
 - "Mark all on page correct/wrong": on the marking screen, one action sets every
   result box of the current page to correct/wrong. Two candidate mechanisms:
