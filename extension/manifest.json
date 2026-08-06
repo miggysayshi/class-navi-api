@@ -14,6 +14,7 @@
         "src/angular-hooks.js",
         "src/day-blocks.js",
         "src/dropdown.js",
+        "src/marking.js",
         "src/content-main.js"
       ],
       "world": "MAIN",
