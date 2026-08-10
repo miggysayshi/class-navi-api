@@ -159,11 +159,15 @@ test("computeManualCalibration derives scale + offset from two corner clicks", (
   expect(cal.manual).toBe(true);
 });
 
-test("computeManualCalibration round-trips through computeInk", () => {
+test("computeManualCalibration round-trips through screenToInk math", () => {
   // clicks at (200,150) and (1400,1150); image 1200×1000; container (100,50)
   const cal = computeManualCalibration(200, 150, 1400, 1150, 1200, 1000, 100, 50);
-  // the second click must map back to ink (1200, 1000)
-  const ink = computeInk(1400, 1150, { left: 100, top: 50 }, cal.sx, cal.sy);
-  expect(ink.x).toBeCloseTo(1200, 4);
-  expect(ink.y).toBeCloseTo(1000, 4);
+  // screenToInk: ink = (client − containerLeft − offset) / scale
+  const inkX = (1400 - 100 - cal.ox) / cal.sx;
+  const inkY = (1150 - 50 - cal.oy) / cal.sy;
+  expect(inkX).toBeCloseTo(1200, 4);
+  expect(inkY).toBeCloseTo(1000, 4);
+  // and the first corner maps to ink (0, 0)
+  expect((200 - 100 - cal.ox) / cal.sx).toBeCloseTo(0, 4);
+  expect((150 - 50 - cal.oy) / cal.sy).toBeCloseTo(0, 4);
 });
