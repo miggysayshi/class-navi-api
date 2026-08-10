@@ -267,7 +267,9 @@ QS.marking = (function () {
           while (end < width && data[(row * width + end) * 4 + 3] >= 128) end++;
           const cells = [];
           for (let c = col; c < end; c += 2) {
-            cells.push(`${Math.round(x + c)}|${Math.round(y + row)}|${t}`);
+            // subtract the 2px rasterizer margin so the glyph edge lands
+            // EXACTLY at (x, y) — pixel-exact placement
+            cells.push(`${Math.round(x + c - 2)}|${Math.round(y + row - 2)}|${t}`);
             t++;
           }
           runs.push({ cs: cells, width: end - col });

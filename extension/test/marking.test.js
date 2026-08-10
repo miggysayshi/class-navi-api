@@ -140,8 +140,8 @@ test("rasterizeTextToRuns produces x|y|t cells from a fake canvas bitmap", () =>
   for (const cells of rowCells) {
     for (const cell of cells) {
       const [x, y] = cell.split("|").map(Number);
-      expect([103, 104, 105, 106]).toContain(x); // col 3-6 + offset 100
-      expect([202, 206]).toContain(y); // base 200 + row 2 or 6
+      expect([101, 102, 103, 104]).toContain(x); // col 3-6 + offset 100 − 2px margin
+      expect([200, 204]).toContain(y); // base 200 + row 2 or 6 − 2px margin
     }
   }
   // every cell carries a time component (x|y|t)

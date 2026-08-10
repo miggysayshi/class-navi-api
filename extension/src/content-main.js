@@ -225,7 +225,7 @@ function enterCommentMode() {
     const preview = document.createElement("div");
     preview.id = "qs-comment-preview";
     preview.style.cssText =
-      "position:fixed;z-index:99998;pointer-events:none;color:#e74c3c;opacity:.55;white-space:pre;line-height:1.35;";
+      "position:fixed;z-index:99998;pointer-events:none;color:#e74c3c;opacity:.55;white-space:pre;line-height:1;margin:0;";
     ui.preview = preview;
     document.body.appendChild(preview);
     updateCommentPreview();
@@ -238,7 +238,9 @@ function enterCommentMode() {
       positionCommentPreview();
     };
     document.addEventListener("mousemove", onMove, true);
-    // click on the worksheet: place at the exact ink point
+    // click on the worksheet: place at the exact ink point. The PREVIEW box
+    // is the source of truth — whatever the preview shows at the cursor is
+    // what lands there (preview rect → ink), so what you see is what you get.
     const onClick = (ev) => {
       if (!commentUI) return;
       if (ev.target && (ev.target.id === "qs-comment-hud" || (ev.target.closest && ev.target.closest("#qs-comment-hud")))) return;
@@ -248,7 +250,8 @@ function enterCommentMode() {
       document.removeEventListener("click", onClick, true);
       document.removeEventListener("keydown", onKey, true);
       const text = input.value.trim();
-      const ink = QS.marking.screenToInk(ev.clientX, ev.clientY, ui.page);
+      const pr = preview.getBoundingClientRect();
+      const ink = QS.marking.screenToInk(pr.left, pr.top, ui.page);
       exitCommentMode();
       if (!ink || !text) return;
       QS.marking
@@ -276,9 +279,10 @@ function enterCommentMode() {
         document.removeEventListener("click", onClick, true);
         document.removeEventListener("keydown", onKey, true);
         const text = input.value.trim();
-        const x = ui.lastX !== undefined ? ui.lastX : window.innerWidth / 2;
-        const y = ui.lastY !== undefined ? ui.lastY : window.innerHeight / 2;
-        const ink = QS.marking.screenToInk(x, y, ui.page);
+        // place at the PREVIEW box (the thing the user is looking at), not
+        // the raw cursor — the preview sits 12px below-right of the cursor
+        const pr = preview.getBoundingClientRect();
+        const ink = QS.marking.screenToInk(pr.left, pr.top, ui.page);
         exitCommentMode();
         if (!ink || !text) return;
         QS.marking
