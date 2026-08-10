@@ -117,11 +117,18 @@ QS.marking = (function () {
       if (questions.length === 0) return { ok: false, message: "no markable questions on this page" };
       const code = rightCodeFor(correct);
       let changed = 0;
+      let cycled = 0;
       for (const q of questions) {
         const list = q && Array.isArray(q.AnswerRightList) ? q.AnswerRightList : null;
         if (!list || list.length === 0) continue;
         const qn = q.QuestionData && q.QuestionData.QuestionNumber;
         if (qn === undefined || qn === null || isNaN(Number(qn))) continue;
+        // skip questions already correct via a PRIOR attempt: cycling the last
+        // attempt to Right would create the app's native double-right state,
+        // which HIDES the mark box (getMarkBox returns null) — the exact bug
+        // the user hit ("boxes disappear when all already correct")
+        const prev = list.length > 1 ? list[list.length - 2] : null;
+        if (code === QR.Right && prev && Number(prev.Right) === QR.Right) continue;
         // cycle natively until the last attempt reaches the target code
         let guard = 0;
         while (guard < 8) {
@@ -130,16 +137,21 @@ QS.marking = (function () {
           page.updateQuestionMarkToNext(Number(qn));
           guard++;
         }
+        if (guard > 0) cycled += guard;
         changed++;
       }
-      // native post-mark sync (mirrors onClick_btnMarkBox)
-      if (typeof page.updateScore === "function") page.updateScore();
-      if (typeof page.updateScoreStatusForPage === "function") page.updateScoreStatusForPage();
-      if (page.changeMarking && typeof page.changeMarking.emit === "function") {
-        try {
-          page.changeMarking.emit({ studySet: set, path: page.pagePath });
-        } catch (e) {
-          /* best-effort */
+      // native post-mark sync (mirrors onClick_btnMarkBox). SKIPPED entirely
+      // when nothing changed: the sync re-derives state, and re-deriving an
+      // already-correct page can hide boxes — a pure no-op must stay a no-op.
+      if (cycled > 0) {
+        if (typeof page.updateScore === "function") page.updateScore();
+        if (typeof page.updateScoreStatusForPage === "function") page.updateScoreStatusForPage();
+        if (page.changeMarking && typeof page.changeMarking.emit === "function") {
+          try {
+            page.changeMarking.emit({ studySet: set, path: page.pagePath });
+          } catch (e) {
+            /* best-effort */
+          }
         }
       }
       return { ok: true, changed };
@@ -182,7 +194,10 @@ QS.marking = (function () {
         if (Number.isFinite(t) && t >= itm) itm = t + 1;
       }
       const item = {
-        st: { tp: window.InkTool.InkPenType.Old_KesText },
+        // full InkText stationery (matches what the SDK serializes for text
+        // items — the loader creates the stationery from st.tp; col default
+        // black renders readably on the worksheet)
+        st: { tp: window.InkTool.InkPenType.Old_KesText, col: "black", w: 1, minw: 1, maxw: 1 },
         t: itm,
         kmn: {
           qu: 0,
@@ -208,10 +223,20 @@ QS.marking = (function () {
       }
       if (typeof page.updateStrokes === "function") {
         try {
-          page.updateStrokes(); // re-render the red-comment layer
+          page.updateStrokes(); // re-sync the stroke layers from the model
         } catch (e) {
           /* best-effort */
         }
+      }
+      // FORCE the canvas redraw — the app never calls this for the red layer
+      // (only the study layer gets prepareForPlay); without it the new ink
+      // sits in the model but never renders.
+      try {
+        const canvas = page.redCommentStroke && page.redCommentStroke.canvas;
+        if (canvas && typeof canvas.redrawInk === "function") canvas.redrawInk();
+        else if (canvas && typeof canvas.redrawCurrentLayerByInk === "function") canvas.redrawCurrentLayerByInk();
+      } catch (e) {
+        /* best-effort */
       }
       return { ok: true };
     } catch (err) {
