@@ -166,6 +166,14 @@ function enterCommentMode() {
     const page = QS.marking.findPageComp(screen);
     if (!screen || !page) return;
     if (commentUI) return; // already active
+    // empirically calibrate the ink→screen transform (check-icon based) —
+    // absorbs container borders, canvas centering, and any shell zoom
+    const cal = QS.marking.calibratePage(page);
+    if (cal) {
+      console.log(`[QuickMark] calibration: offset (${cal.ox}, ${cal.oy})px` + (cal.sx ? `, scale verified ${cal.sx}` : ""));
+    } else {
+      console.warn("[QuickMark] calibration: no icon match found — falling back to container math");
+    }
     const ui = (commentUI = {
       sizeIdx: 2, // 40px default
       styleIdx: 0, // Cursive

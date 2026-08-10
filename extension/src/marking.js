@@ -199,9 +199,90 @@ QS.marking = (function () {
   function screenToInk(clientX, clientY, page) {
     try {
       if (!page) return null;
+      const cal = page.__qsCalibration || { ox: 0, oy: 0, sx: null, sy: null };
       const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`) || null;
       const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
-      return computeInk(clientX, clientY, rect, page.scaleX, page.scaleY);
+      const scaleX = cal.sx > 0 ? cal.sx : page.scaleX;
+      const scaleY = cal.sy > 0 ? cal.sy : page.scaleY;
+      return {
+        x: (clientX - rect.left - cal.ox) / scaleX,
+        y: (clientY - rect.top - cal.oy) / scaleY,
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Empirically calibrate the ink→screen transform for the page. The app
+   * renders check icons at KNOWN ink coordinates (CheckIconLocation1 of each
+   * question); the extension locates the actually-rendered icon element and
+   * derives the true offset (absorbing container borders, canvas centering,
+   * SDK origin offsets, and shell zoom). Stores the result on the page comp
+   * as __qsCalibration. Never throws.
+   */
+  function calibratePage(page) {
+    try {
+      if (!page || !page.model || !page.studySet) return null;
+      const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`);
+      if (!container) return null;
+      const cRect = container.getBoundingClientRect();
+      const srd = page.studySet.scoringResultData;
+      const marks = srd && srd.gradingResultData && srd.gradingResultData.PageMarks;
+      if (!Array.isArray(marks)) return null;
+      const pageIndex = page.pagePath ? Number(page.pagePath.pageIndex) : 0;
+      const pm = marks.find((p) => Number(p.PageNumber) === pageIndex);
+      if (!pm || !Array.isArray(pm.QuestionMarks)) return null;
+      // candidates: every question's CheckIconLocation1 (known ink coords)
+      const candidates = [];
+      for (const q of pm.QuestionMarks) {
+        const loc = q.QuestionData && q.QuestionData.CheckIconLocation1;
+        if (loc && !isNaN(Number(loc.x)) && !isNaN(Number(loc.y))) {
+          candidates.push({ inkX: Number(loc.x), inkY: Number(loc.y) });
+        }
+        if (candidates.length >= 3) break;
+      }
+      if (candidates.length === 0) return null;
+      const sx = Number(page.scaleX) > 0 ? Number(page.scaleX) : 1;
+      const sy = Number(page.scaleY) > 0 ? Number(page.scaleY) : 1;
+      // find a rendered element whose rect matches a candidate's predicted
+      // position (within tolerance) — the check icon / result box
+      const abs = [...container.querySelectorAll("div")].filter(
+        (d) => getComputedStyle(d).position === "absolute"
+      );
+      for (const cand of candidates) {
+        const px = cand.inkX * sx;
+        const py = cand.inkY * sy;
+        for (const el of abs) {
+          const r = el.getBoundingClientRect();
+          const dx = Math.abs(r.left - cRect.left - px);
+          const dy = Math.abs(r.top - cRect.top - py);
+          if (dx < 4 && dy < 4 && r.width > 0 && r.height > 0) {
+            // verify the scale with a second sample if available
+            let vx = null;
+            let vy = null;
+            if (candidates.length > 1) {
+              const c2 = candidates[1];
+              const p2x = c2.inkX * sx;
+              const p2y = c2.inkY * sy;
+              for (const el2 of abs) {
+                const r2 = el2.getBoundingClientRect();
+                const dx2 = Math.abs(r2.left - cRect.left - p2x);
+                const dy2 = Math.abs(r2.top - cRect.top - p2y);
+                if (dx2 < 4 && dy2 < 4) {
+                  vx = sx;
+                  vy = sy;
+                  break;
+                }
+              }
+            }
+            const cal = { ox: r.left - cRect.left - px, oy: r.top - cRect.top - py, sx: vx, sy: vy };
+            page.__qsCalibration = cal;
+            return cal;
+          }
+        }
+      }
+      return null;
     } catch (e) {
       return null;
     }
@@ -354,6 +435,7 @@ QS.marking = (function () {
     isTypingTarget,
     computeInk,
     screenToInk,
+    calibratePage,
     buildRedCommentItems,
     rasterizeTextToRuns,
     findScreen,
