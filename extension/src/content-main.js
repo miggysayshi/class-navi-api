@@ -115,6 +115,67 @@ function ensureMarkingShortcuts() {
   });
 }
 
+// ---------- Quick Mark: manual calibration (corner clicks) ----------
+
+function enterCalibrationMode() {
+  try {
+    const screen = QS.marking.findScreen();
+    const page = QS.marking.findPageComp(screen);
+    if (!screen || !page || !page.model) return;
+    if (window.__qsCalibMode) return;
+    window.__qsCalibMode = true;
+    const img = page.model.imgSize || {};
+    if (!Number(img.width) || !Number(img.height)) {
+      window.__qsCalibMode = false;
+      console.warn("[QuickMark] calibration: no image size on this page");
+      return;
+    }
+    const hint = document.createElement("div");
+    hint.id = "qs-calib-hint";
+    hint.style.cssText =
+      "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:99999;background:#8e44ad;color:#fff;padding:6px 14px;border-radius:16px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.25);";
+    let first = null;
+    const onClick = (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (!first) {
+        first = { x: ev.clientX, y: ev.clientY };
+        hint.textContent = "Now click the BOTTOM-RIGHT corner of the page (Esc cancels)";
+        return;
+      }
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKey, true);
+      const cal = QS.marking.applyManualCalibration(page, first.x, first.y, ev.clientX, ev.clientY, img.width, img.height);
+      hint.remove();
+      window.__qsCalibMode = false;
+      if (cal) {
+        console.log(
+          `[QuickMark] manual calibration: scale (${cal.sx.toFixed(4)}, ${cal.sy.toFixed(4)}), offset (${cal.ox}, ${cal.oy})px — comment placement uses it`
+        );
+      } else {
+        console.warn("[QuickMark] calibration failed");
+      }
+    };
+    const onKey = (ev) => {
+      if (ev.key === "Escape") {
+        document.removeEventListener("click", onClick, true);
+        document.removeEventListener("keydown", onKey, true);
+        hint.remove();
+        window.__qsCalibMode = false;
+        console.log("[QuickMark] calibration cancelled");
+      }
+    };
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKey, true);
+    hint.textContent = "Click the TOP-LEFT corner of the page (Esc cancels)";
+    document.body.appendChild(hint);
+    console.log("[QuickMark] calibration mode — click the page corners");
+  } catch (err) {
+    window.__qsCalibMode = false;
+    console.warn("[QuickMark] calibration:", err);
+  }
+}
+
 // ---------- Quick Mark: comment mode (HUD + live preview + font controls) ----------
 
 const QS_COMMENT_STYLES = [
@@ -167,12 +228,16 @@ function enterCommentMode() {
     if (!screen || !page) return;
     if (commentUI) return; // already active
     // empirically calibrate the ink→screen transform (check-icon based) —
-    // absorbs container borders, canvas centering, and any shell zoom
-    const cal = QS.marking.calibratePage(page);
-    if (cal) {
-      console.log(`[QuickMark] calibration: offset (${cal.ox}, ${cal.oy})px` + (cal.sx ? `, scale verified ${cal.sx}` : ""));
-    } else {
-      console.warn("[QuickMark] calibration: no icon match found — falling back to container math");
+    // absorbs container borders, canvas centering, and any shell zoom.
+    // A MANUAL corner calibration overrides the empirical one.
+    const existing = QS.marking.getCalibration(page);
+    if (!existing || !existing.manual) {
+      const cal = QS.marking.calibratePage(page);
+      if (cal) {
+        console.log(`[QuickMark] calibration: offset (${cal.ox}, ${cal.oy})px` + (cal.sx ? `, scale verified ${cal.sx}` : ""));
+      } else {
+        console.warn("[QuickMark] calibration: no icon match found — falling back to container math");
+      }
     }
     const ui = (commentUI = {
       sizeIdx: 2, // 40px default
@@ -347,9 +412,14 @@ function bootMarking() {
       enterCommentMode();
       return { ok: true };
     });
+    const calib = mk("⇱ Calibrate", MARK_BTN_STYLE.replace("#c0392b", "#8e44ad"), "Manually calibrate comment placement: click the page's top-left then bottom-right corners", () => {
+      enterCalibrationMode();
+      return { ok: true };
+    });
     toolbar.appendChild(all);
     toolbar.appendChild(none);
     toolbar.appendChild(pen);
+    toolbar.appendChild(calib);
     console.log("[QuickMark] marking toolbar injected");
   } catch (err) {
     console.warn("[QuickMark] boot failed:", err);

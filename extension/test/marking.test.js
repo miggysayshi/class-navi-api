@@ -1,7 +1,7 @@
 // test/marking.test.js — pure logic for the Quick Mark marking-screen features
 import { test, expect } from "bun:test";
 await import("../src/marking.js");
-const { markPageQuestions, rightCodeFor, isTypingTarget, buildRedCommentItems, computeInk, rasterizeTextToRuns } = globalThis.QS.marking;
+const { markPageQuestions, rightCodeFor, isTypingTarget, buildRedCommentItems, computeInk, computeManualCalibration, rasterizeTextToRuns } = globalThis.QS.marking;
 
 // a realistic gradingResultData slice (from the live sample, 2026-08-05)
 function samplePage() {
@@ -146,4 +146,23 @@ test("rasterizeTextToRuns produces x|y|t cells from a fake canvas bitmap", () =>
   }
   // every cell carries a time component (x|y|t)
   expect(rowCells[0][0].split("|").length).toBe(3);
+});
+
+test("computeManualCalibration derives scale + offset from two corner clicks", () => {
+  // image 1000×1400; clicks at screen (150, 80) and (1150, 1340);
+  // container origin (100, 40) → offset = click1 − origin
+  const cal = computeManualCalibration(150, 80, 1150, 1340, 1000, 1400, 100, 40);
+  expect(cal.ox).toBe(50);
+  expect(cal.oy).toBe(40);
+  expect(cal.sx).toBeCloseTo(1.0, 6); // (1150−150)/1000
+  expect(cal.sy).toBeCloseTo(0.9, 6); // (1340−80)/1400
+  expect(cal.manual).toBe(true);
+});
+
+test("computeManualCalibration round-trips through computeInk", () => {
+  const cal = computeManualCalibration(200, 150, 1400, 1150, 1200, 1000, 100, 50);
+  // a screen point at the second corner must map back to ink (1200, 1000)
+  const ink = computeInk(200 + cal.ox + 1200 * cal.sx, 50 + cal.oy + 1000 * cal.sy, { left: 100, top: 50 }, cal.sx, cal.sy);
+  expect(ink.x).toBeCloseTo(1200, 4);
+  expect(ink.y).toBeCloseTo(1000, 4);
 });

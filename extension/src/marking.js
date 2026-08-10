@@ -199,7 +199,7 @@ QS.marking = (function () {
   function screenToInk(clientX, clientY, page) {
     try {
       if (!page) return null;
-      const cal = page.__qsCalibration || { ox: 0, oy: 0, sx: null, sy: null };
+      const cal = getCalibration(page) || { ox: 0, oy: 0, sx: null, sy: null };
       const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`) || null;
       const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
       const scaleX = cal.sx > 0 ? cal.sx : page.scaleX;
@@ -208,6 +208,54 @@ QS.marking = (function () {
         x: (clientX - rect.left - cal.ox) / scaleX,
         y: (clientY - rect.top - cal.oy) / scaleY,
       };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** The active calibration for a page: page-level first, then screen-level. */
+  function getCalibration(page) {
+    if (page && page.__qsCalibration) return page.__qsCalibration;
+    try {
+      const screen = findScreen();
+      if (screen && screen.__qsCalibration) return screen.__qsCalibration;
+    } catch (e) {
+      /* best-effort */
+    }
+    return null;
+  }
+
+  /**
+   * Pure: derive scale + offset from two screen clicks at known ink corners.
+   * Corner 1 = ink (0, 0), corner 2 = ink (imgW, imgH). screen = ink·scale +
+   * offset → scale = Δscreen/Δink, offset = corner1 − 0. container origin
+   * subtracted so the result is container-relative (like screenToInk expects).
+   */
+  function computeManualCalibration(s1x, s1y, s2x, s2y, imgW, imgH, cLeft, cTop) {
+    const w = Number(imgW) > 0 ? Number(imgW) : 1;
+    const h = Number(imgH) > 0 ? Number(imgH) : 1;
+    return {
+      ox: s1x - (cLeft || 0),
+      oy: s1y - (cTop || 0),
+      sx: (s2x - s1x) / w,
+      sy: (s2y - s1y) / h,
+      manual: true,
+    };
+  }
+
+  /**
+   * Apply a manual corner calibration to the page (and the whole screen —
+   * all pages share the layout). Returns the calibration.
+   */
+  function applyManualCalibration(page, s1x, s1y, s2x, s2y, imgW, imgH) {
+    try {
+      const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`);
+      const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
+      const cal = computeManualCalibration(s1x, s1y, s2x, s2y, imgW, imgH, rect.left, rect.top);
+      if (page) page.__qsCalibration = cal;
+      const screen = findScreen();
+      if (screen) screen.__qsCalibration = cal;
+      return cal;
     } catch (e) {
       return null;
     }
@@ -435,6 +483,9 @@ QS.marking = (function () {
     isTypingTarget,
     computeInk,
     screenToInk,
+    getCalibration,
+    computeManualCalibration,
+    applyManualCalibration,
     calibratePage,
     buildRedCommentItems,
     rasterizeTextToRuns,
