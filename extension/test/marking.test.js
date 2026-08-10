@@ -1,7 +1,7 @@
 // test/marking.test.js — pure logic for the Quick Mark marking-screen features
 import { test, expect } from "bun:test";
 await import("../src/marking.js");
-const { markPageQuestions, rightCodeFor, isTypingTarget, buildTextDataArgs } = globalThis.QS.marking;
+const { markPageQuestions, rightCodeFor, isTypingTarget, buildTextItem } = globalThis.QS.marking;
 
 // a realistic gradingResultData slice (from the live sample, 2026-08-05)
 function samplePage() {
@@ -75,7 +75,21 @@ test("isTypingTarget guards shortcuts while typing", () => {
   expect(isTypingTarget(body)).toBe(false);
 });
 
-test("buildTextDataArgs passes the SDK's 0-based page index", () => {
-  const args = buildTextDataArgs({ ps: [] }, 1, "Great work!", 120, 80);
-  expect(args).toEqual([{ ps: [] }, 0, "Great work!", 120, 80, undefined]);
+test("buildTextItem produces the SDK text item with ordered numbering", () => {
+  const ink = { is: [{ t: 0 }, { t: 2 }] };
+  const item = buildTextItem(ink, 1, "Great work!", 120, 80);
+  expect(item.st.tp).toBe(23); // InkPenType.Old_KesText
+  expect(item.t).toBe(3); // one past the max existing item number
+  expect(item.kmn.tx).toBe("Great work!");
+  expect(item.kmn.tr).toBe(1); // page index
+  expect(item.kmn.txtRect).toEqual({ x: 120, y: 80, width: 96, height: 20 }); // 12 chars * 8
+});
+
+test("buildTextItem handles empty inks and zero items", () => {
+  const item = buildTextItem({ is: [] }, 0, "hi", 0, 0);
+  expect(item.t).toBe(0);
+  expect(item.kmn.txtRect.x).toBe(0);
+  const item2 = buildTextItem(null, 0, "hi", 10, 10);
+  expect(item2.t).toBe(0);
+  expect(item2.kmn.txtRect.width).toBeGreaterThanOrEqual(40);
 });
