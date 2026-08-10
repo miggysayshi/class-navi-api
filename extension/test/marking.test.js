@@ -82,7 +82,7 @@ test("buildTextItem produces the SDK text item with ordered numbering", () => {
   expect(item.t).toBe(3); // one past the max existing item number
   expect(item.kmn.tx).toBe("Great work!");
   expect(item.kmn.tr).toBe(1); // page index
-  expect(item.kmn.txtRect).toEqual({ x: 120, y: 80, width: 96, height: 20 }); // 12 chars * 8
+  expect(item.kmn.txtRect).toEqual({ x: 120, y: 80, width: 88, height: 20 }); // 11 chars * 8
 });
 
 test("buildTextItem handles empty inks and zero items", () => {
