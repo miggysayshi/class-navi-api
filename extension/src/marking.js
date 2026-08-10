@@ -180,6 +180,34 @@ QS.marking = (function () {
   // ---------- typed comment (text → real ink strokes) ----------
 
   /**
+   * Pure: map a screen point to page-image (ink) coordinates.
+   * The app's own forward mapping is screen = ink * scale (see
+   * getWorksheetItemLocation: floor(inkX * scaleX)); the reference origin is
+   * the worksheet-container-wrapper rect of the page. Inverting with the
+   * SAME scale + origin gives pixel-exact placement (zoomRatio alone drifts).
+   */
+  function computeInk(clientX, clientY, containerRect, scaleX, scaleY) {
+    const sx = Number(scaleX) > 0 ? Number(scaleX) : 1;
+    const sy = Number(scaleY) > 0 ? Number(scaleY) : 1;
+    return {
+      x: (clientX - containerRect.left) / sx,
+      y: (clientY - containerRect.top) / sy,
+    };
+  }
+
+  /** Live: screen point → ink coordinates for the current page. */
+  function screenToInk(clientX, clientY, page) {
+    try {
+      if (!page) return null;
+      const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`) || null;
+      const rect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
+      return computeInk(clientX, clientY, rect, page.scaleX, page.scaleY);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Build SDK-format red-pen stroke items from rasterized runs.
    * runs = [{ cs: ["x|y|t", ...], width }]; the loader treats 3-part cells
    * ("x|y|t") with the stationery's width, auto-assigns pen modes and adds
@@ -203,15 +231,17 @@ QS.marking = (function () {
   /**
    * Rasterize the text into horizontal ink runs. Draws the text on an
    * offscreen canvas, then walks the pixel rows (step 2) collecting contiguous
-   * opaque segments as "x|y|t" cells. Pure-ish (needs a canvas); never throws.
+   * opaque segments as "x|y|t" cells. Never throws. fontFamily is a CSS
+   * font-family value; fontSize in image pixels.
    */
-  function rasterizeTextToRuns(text, x, y, fontSize, canvasFactory) {
+  function rasterizeTextToRuns(text, x, y, fontSize, fontFamily, canvasFactory) {
     try {
       const make = canvasFactory || (() => document.createElement("canvas"));
       const canvas = make();
       const ctx = canvas.getContext("2d");
       const fs = fontSize || 36;
-      const font = `${fs}px "Comic Sans MS", "Comic Sans", cursive, sans-serif`;
+      const fam = fontFamily || '"Comic Sans MS", "Comic Sans", cursive';
+      const font = `${fs}px ${fam}`;
       ctx.font = font;
       const width = Math.ceil(ctx.measureText(text).width) + 4;
       const height = Math.ceil(fs * 1.4) + 4;
@@ -252,16 +282,18 @@ QS.marking = (function () {
 
   /**
    * Add a typed comment to the current page's red-comment ink at (x, y) —
-   * page-image coordinates — as REAL red-pen strokes. Returns { ok, message }.
+   * page-image coordinates — as REAL red-pen strokes. opts: { fontSize,
+   * fontFamily }. Returns { ok, message }.
    */
-  async function addTypedComment(text, x, y) {
+  async function addTypedComment(text, x, y, opts) {
     try {
       const screen = findScreen();
       if (!screen) return { ok: false, message: "marking screen not found" };
       const page = findPageComp(screen);
       if (!page || !page.model) return { ok: false, message: "worksheet page not found" };
       if (!text) return { ok: false, message: "empty comment" };
-      const runs = rasterizeTextToRuns(text, Number(x) || 0, Number(y) || 0, 36);
+      const o = opts || {};
+      const runs = rasterizeTextToRuns(text, Number(x) || 0, Number(y) || 0, o.fontSize || 36, o.fontFamily);
       if (runs.length === 0) return { ok: false, message: "could not rasterize the text" };
       // the red-comment ink for this page (JSON string, or null when unused)
       let inkStr = page.redCommentStroke && page.redCommentStroke.inkData ? page.redCommentStroke.inkData : page.model.redComment;
@@ -318,6 +350,8 @@ QS.marking = (function () {
     rightCodeFor,
     markPageQuestions,
     isTypingTarget,
+    computeInk,
+    screenToInk,
     buildRedCommentItems,
     rasterizeTextToRuns,
     findScreen,

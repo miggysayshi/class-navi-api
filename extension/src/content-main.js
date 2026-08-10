@@ -115,86 +115,190 @@ function ensureMarkingShortcuts() {
   });
 }
 
+// ---------- Quick Mark: comment mode (HUD + live preview + font controls) ----------
+
+const QS_COMMENT_STYLES = [
+  { name: "Cursive", font: '"Comic Sans MS", "Comic Sans", cursive' },
+  { name: "Print", font: '"Arial", "Helvetica", sans-serif' },
+  { name: "Bold", font: '"Arial Black", "Arial", sans-serif' },
+];
+const QS_COMMENT_SIZES = [24, 32, 40, 48, 56, 64, 72];
+let commentUI = null; // {hud, input, sizeLabel, styleBtn, preview, sizeIdx, styleIdx, lastX, lastY, page}
+
+function previewScale() {
+  const page = commentUI && commentUI.page;
+  const sx = page && Number(page.scaleX) > 0 ? Number(page.scaleX) : 1;
+  const sy = page && Number(page.scaleY) > 0 ? Number(page.scaleY) : 1;
+  return { sx, sy };
+}
+
+function updateCommentPreview() {
+  if (!commentUI) return;
+  const text = commentUI.input.value.trim() || "Aa";
+  const { sx } = previewScale();
+  commentUI.preview.textContent = text;
+  const s = QS_COMMENT_STYLES[commentUI.styleIdx];
+  commentUI.preview.style.font = `${QS_COMMENT_SIZES[commentUI.sizeIdx] * sx}px ${s.font}`;
+  commentUI.preview.style.display = text ? "block" : "none";
+  commentUI.sizeLabel.textContent = QS_COMMENT_SIZES[commentUI.sizeIdx];
+  commentUI.styleBtn.textContent = s.name;
+}
+
+function positionCommentPreview() {
+  if (!commentUI) return;
+  const x = commentUI.lastX !== undefined ? commentUI.lastX : window.innerWidth / 2;
+  const y = commentUI.lastY !== undefined ? commentUI.lastY : window.innerHeight / 2;
+  commentUI.preview.style.left = x + 12 + "px";
+  commentUI.preview.style.top = y + 12 + "px";
+}
+
+function exitCommentMode() {
+  if (!commentUI) return;
+  const ui = commentUI;
+  commentUI = null;
+  if (ui.hud && ui.hud.parentNode) ui.hud.parentNode.removeChild(ui.hud);
+  if (ui.preview && ui.preview.parentNode) ui.preview.parentNode.removeChild(ui.preview);
+}
+
 function enterCommentMode() {
   try {
     const screen = QS.marking.findScreen();
-    if (!screen) return;
-    if (window.__qsCommentMode) return; // already picking a spot
-    window.__qsCommentMode = true;
-    console.log("[QuickMark] comment mode — click a spot on the worksheet (Esc to cancel)");
+    const page = QS.marking.findPageComp(screen);
+    if (!screen || !page) return;
+    if (commentUI) return; // already active
+    const ui = (commentUI = {
+      sizeIdx: 2, // 40px default
+      styleIdx: 0, // Cursive
+      lastX: undefined,
+      lastY: undefined,
+      page,
+    });
+    // the HUD panel (top center): input + size + style
+    const hud = document.createElement("div");
+    hud.id = "qs-comment-hud";
+    hud.style.cssText =
+      "position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;background:#fff;border:1px solid #2a6df4;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);padding:8px 10px;display:flex;align-items:center;gap:6px;font-size:12px;";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "Type a comment — click or Enter to place, Esc cancels";
+    input.style.cssText = "width:230px;padding:5px 8px;border:1px solid #bbb;border-radius:4px;font-size:13px;";
+    input.addEventListener("input", updateCommentPreview);
+    const mkBtn = (label, title, fn) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.title = title;
+      b.textContent = label;
+      b.style.cssText =
+        "padding:4px 9px;border:1px solid #2a6df4;border-radius:4px;background:#fff;color:#2a6df4;cursor:pointer;font-size:12px;font-weight:600;";
+      b.addEventListener("click", fn);
+      return b;
+    };
+    const sizeDown = mkBtn("A−", "Smaller text", () => {
+      ui.sizeIdx = Math.max(0, ui.sizeIdx - 1);
+      updateCommentPreview();
+      input.focus();
+    });
+    const sizeLabel = document.createElement("span");
+    sizeLabel.style.cssText = "min-width:26px;text-align:center;font-weight:600;";
+    const sizeUp = mkBtn("A+", "Bigger text", () => {
+      ui.sizeIdx = Math.min(QS_COMMENT_SIZES.length - 1, ui.sizeIdx + 1);
+      updateCommentPreview();
+      input.focus();
+    });
+    const styleBtn = mkBtn("", "Font style", () => {
+      ui.styleIdx = (ui.styleIdx + 1) % QS_COMMENT_STYLES.length;
+      updateCommentPreview();
+      input.focus();
+    });
+    hud.appendChild(input);
+    hud.appendChild(sizeDown);
+    hud.appendChild(sizeLabel);
+    hud.appendChild(sizeUp);
+    hud.appendChild(styleBtn);
+    ui.hud = hud;
+    ui.input = input;
+    ui.sizeLabel = sizeLabel;
+    ui.styleBtn = styleBtn;
+    document.body.appendChild(hud);
+    // the live preview overlay — follows the cursor, shows the exact text,
+    // font, size, and color at the exact placement scale
+    const preview = document.createElement("div");
+    preview.id = "qs-comment-preview";
+    preview.style.cssText =
+      "position:fixed;z-index:99998;pointer-events:none;color:#e74c3c;opacity:.55;white-space:pre;line-height:1.35;";
+    ui.preview = preview;
+    document.body.appendChild(preview);
+    updateCommentPreview();
+    // mousemove: track the cursor + move the preview (capture; ignore the HUD)
+    const onMove = (ev) => {
+      if (!commentUI) return;
+      if (ev.target && (ev.target.id === "qs-comment-hud" || ev.target.closest && ev.target.closest("#qs-comment-hud"))) return;
+      ui.lastX = ev.clientX;
+      ui.lastY = ev.clientY;
+      positionCommentPreview();
+    };
+    document.addEventListener("mousemove", onMove, true);
+    // click on the worksheet: place at the exact ink point
     const onClick = (ev) => {
-      window.__qsCommentMode = false;
+      if (!commentUI) return;
+      if (ev.target && (ev.target.id === "qs-comment-hud" || (ev.target.closest && ev.target.closest("#qs-comment-hud")))) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      document.removeEventListener("mousemove", onMove, true);
       document.removeEventListener("click", onClick, true);
-      hideCommentHint();
-      // map the click to page-image coordinates
-      const canvas = document.querySelector("app-worksheet-page canvas");
-      const page = QS.marking.findPageComp(screen);
-      if (!canvas || !page || !page.model) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = (ev.clientX - rect.left) / (page.model.zoomRatio || 1);
-      const y = (ev.clientY - rect.top) / (page.model.zoomRatio || 1);
-      showCommentInput(canvas, ev.clientX, ev.clientY, x, y);
+      document.removeEventListener("keydown", onKey, true);
+      const text = input.value.trim();
+      const ink = QS.marking.screenToInk(ev.clientX, ev.clientY, ui.page);
+      exitCommentMode();
+      if (!ink || !text) return;
+      QS.marking
+        .addTypedComment(text, Math.max(0, Math.round(ink.x)), Math.max(0, Math.round(ink.y)), {
+          fontSize: QS_COMMENT_SIZES[ui.sizeIdx],
+          fontFamily: QS_COMMENT_STYLES[ui.styleIdx].font,
+        })
+        .then((r) => {
+          if (!r.ok) console.warn("[QuickMark] comment:", r.message);
+          else console.log(`[QuickMark] comment placed: "${text}" (${r.strokes} strokes)`);
+        });
+    };
+    // Enter places at the last cursor position; Esc cancels
+    const onKey = (ev) => {
+      if (!commentUI) return;
+      if (ev.key === "Escape") {
+        document.removeEventListener("mousemove", onMove, true);
+        document.removeEventListener("click", onClick, true);
+        document.removeEventListener("keydown", onKey, true);
+        exitCommentMode();
+      } else if (ev.key === "Enter") {
+        ev.preventDefault();
+        ev.stopPropagation();
+        document.removeEventListener("mousemove", onMove, true);
+        document.removeEventListener("click", onClick, true);
+        document.removeEventListener("keydown", onKey, true);
+        const text = input.value.trim();
+        const x = ui.lastX !== undefined ? ui.lastX : window.innerWidth / 2;
+        const y = ui.lastY !== undefined ? ui.lastY : window.innerHeight / 2;
+        const ink = QS.marking.screenToInk(x, y, ui.page);
+        exitCommentMode();
+        if (!ink || !text) return;
+        QS.marking
+          .addTypedComment(text, Math.max(0, Math.round(ink.x)), Math.max(0, Math.round(ink.y)), {
+            fontSize: QS_COMMENT_SIZES[ui.sizeIdx],
+            fontFamily: QS_COMMENT_STYLES[ui.styleIdx].font,
+          })
+          .then((r) => {
+            if (!r.ok) console.warn("[QuickMark] comment:", r.message);
+            else console.log(`[QuickMark] comment placed: "${text}" (${r.strokes} strokes)`);
+          });
+      }
     };
     document.addEventListener("click", onClick, true);
-    showCommentHint();
-    const cancel = (ev) => {
-      if (ev.key === "Escape") {
-        window.__qsCommentMode = false;
-        document.removeEventListener("click", onClick, true);
-        document.removeEventListener("keydown", cancel, true);
-        hideCommentHint();
-      }
-    };
-    document.addEventListener("keydown", cancel, true);
-  } catch (err) {
-    window.__qsCommentMode = false;
-    console.warn("[QuickMark] comment mode:", err);
-  }
-}
-
-function showCommentHint() {
-  let hint = document.getElementById("qs-comment-hint");
-  if (!hint) {
-    hint = document.createElement("div");
-    hint.id = "qs-comment-hint";
-    hint.textContent = "Click a spot on the worksheet to place the comment (Esc cancels)";
-    hint.style.cssText =
-      "position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:99999;background:#2a6df4;color:#fff;padding:6px 14px;border-radius:16px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.25);";
-    document.body.appendChild(hint);
-  }
-}
-
-function hideCommentHint() {
-  const hint = document.getElementById("qs-comment-hint");
-  if (hint) hint.remove();
-}
-
-function showCommentInput(anchor, clientX, clientY, x, y) {
-  try {
-    const input = document.createElement("input");
-    input.id = "qs-comment-input";
-    input.type = "text";
-    input.placeholder = "Type a comment… Enter to place, Esc to cancel";
-    input.style.cssText =
-      "position:fixed;z-index:99999;left:" + Math.min(clientX, window.innerWidth - 280) + "px;top:" +
-      (clientY - 44 < 0 ? clientY + 14 : clientY - 44) + "px;width:260px;padding:6px 10px;border:1px solid #2a6df4;border-radius:4px;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.2);";
-    document.body.appendChild(input);
+    document.addEventListener("keydown", onKey, true);
     input.focus();
-    const done = async (ev) => {
-      if (ev.key !== "Enter" && ev.key !== "Escape") return;
-      document.removeEventListener("keydown", done, true);
-      const text = input.value.trim();
-      input.remove();
-      hideCommentHint();
-      if (ev.key === "Enter" && text) {
-        const r = await QS.marking.addTypedComment(text, Math.max(0, Math.round(x)), Math.max(0, Math.round(y)));
-        if (!r.ok) console.warn("[QuickMark] comment:", r.message);
-        else console.log(`[QuickMark] comment placed: "${text}"`);
-      }
-    };
-    document.addEventListener("keydown", done, true);
+    console.log("[QuickMark] comment mode — type, move the mouse to position the preview, click or Enter to place");
   } catch (err) {
-    console.warn("[QuickMark] comment input:", err);
+    commentUI = null;
+    console.warn("[QuickMark] comment mode:", err);
   }
 }
 

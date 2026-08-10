@@ -1,7 +1,7 @@
 // test/marking.test.js — pure logic for the Quick Mark marking-screen features
 import { test, expect } from "bun:test";
 await import("../src/marking.js");
-const { markPageQuestions, rightCodeFor, isTypingTarget, buildRedCommentItems } = globalThis.QS.marking;
+const { markPageQuestions, rightCodeFor, isTypingTarget, buildRedCommentItems, computeInk, rasterizeTextToRuns } = globalThis.QS.marking;
 
 // a realistic gradingResultData slice (from the live sample, 2026-08-05)
 function samplePage() {
@@ -96,4 +96,54 @@ test("buildRedCommentItems ignores empty runs and starts numbering from the ink"
   const items = buildRedCommentItems([{ cs: [] }, { cs: ["1|1|0"] }], 1, 3);
   expect(items.length).toBe(1);
   expect(items[0].t).toBe(3);
+});
+
+test("computeInk inverts the app's scale with the container origin", () => {
+  const rect = { left: 120, top: 60 };
+  // app: screen = floor(ink * scale); scale 1.5 → ink 100 lands at 120 + 150
+  const ink = computeInk(270, 210, rect, 1.5, 1.5);
+  expect(ink.x).toBe(100);
+  expect(ink.y).toBe(100);
+  // zero-safe scales fall back to 1
+  const ink2 = computeInk(130, 70, rect, 0, 0);
+  expect(ink2.x).toBe(10);
+  expect(ink2.y).toBe(10);
+});
+
+test("rasterizeTextToRuns produces x|y|t cells from a fake canvas bitmap", () => {
+  const width = 14; // measureText(10) + 4
+  const height = 55; // ceil(36 * 1.4) + 4
+  // a fake canvas: opaque pixels in rows 2 and 6, columns 3-6 (a mini "glyph")
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  const opaque = (row, col) => {
+    const i = (row * width + col) * 4;
+    pixels[i + 3] = 255;
+  };
+  for (let c = 3; c <= 6; c++) {
+    opaque(2, c);
+    opaque(6, c);
+  }
+  const fakeCtx = {
+    font: "",
+    measureText: () => ({ width: 10 }),
+    fillText: () => {},
+    getImageData: () => ({ data: pixels }),
+  };
+  const fakeCanvas = {
+    width: 0,
+    height: 0,
+    getContext: () => fakeCtx,
+  };
+  const runs = rasterizeTextToRuns("ab", 100, 200, 36, '"Arial"', () => fakeCanvas);
+  expect(runs.length).toBe(2); // two opaque rows
+  const rowCells = runs.map((r) => r.cs);
+  for (const cells of rowCells) {
+    for (const cell of cells) {
+      const [x, y] = cell.split("|").map(Number);
+      expect([103, 104, 105, 106]).toContain(x); // col 3-6 + offset 100
+      expect([202, 206]).toContain(y); // base 200 + row 2 or 6
+    }
+  }
+  // every cell carries a time component (x|y|t)
+  expect(rowCells[0][0].split("|").length).toBe(3);
 });
