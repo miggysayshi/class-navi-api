@@ -1,17 +1,19 @@
 // src/marking.js — classic script; Quick Mark features for the marking screen
 // (ATD0020P): mark-all per page, typed on-page comments, keyboard shortcuts.
 //
-// NATIVE-PARITY design (2026-08-05, after live bug: mark boxes vanished when a
-// re-derived markBoxs array was assigned — the app renders mark boxes from its
-// own per-question derivation):
+// NATIVE-PARITY design (2026-08-05):
 //   - markAll drives the app's OWN per-question method
 //     (worksheet-page.updateQuestionMarkToNext — exactly what a mark-box click
 //     calls) the right number of cycles to reach the target state; then the
 //     app's updateScore/updateScoreStatusForPage/changeMarking.emit.
-//   - addTypedComment constructs the SDK's text item (InkPenType.Old_KesText)
-//     directly and writes it into the red-comment layer: the stroke's inkData,
-//     the model, and scoringResultData.redCommentList[pageIndex] (the app's own
-//     updateRedComment sync — the save source). The app's own Save persists it.
+//   - The CURRENT page = the SELECTED worksheet-page component. The app keeps
+//     ALL pages of ALL sets in the DOM (verified: 10 app-worksheet-page
+//     elements for a 5-set × 2-page session) — querySelector alone grabs the
+//     wrong page. The active one carries isSelected / visible layout.
+//   - addTypedComment renders the typed text as REAL INK STROKES (rasterized
+//     to SDK cell strings) in the red-comment layer — strokes render and save
+//     in any layer; the ink-text item format is loader-unsafe, so no text
+//     items. The app's own Save persists the red ink (RedComment).
 // Attaches to globalThis.QS.
 var QS = globalThis.QS || (globalThis.QS = {});
 
@@ -72,14 +74,29 @@ QS.marking = (function () {
     }
   }
 
-  /** The current worksheet-page component (canvas with mark boxes). */
+  /**
+   * The CURRENT worksheet-page component. The app keeps every page of every
+   * set in the DOM (hidden/shown by selection) — pick the SELECTED one, with
+   * a visibility fallback. Returns null when none is active.
+   */
   function findPageComp(screen) {
     try {
-      if (!screen) return null;
-      const el = document.querySelector("app-worksheet-page");
-      if (!el) return null;
-      const found = QS.angular.findComp(el, ["redCommentStroke"]);
-      return found ? found.comp : null;
+      const els = [...document.querySelectorAll("app-worksheet-page")];
+      for (const el of els) {
+        const found = QS.angular.findComp(el, ["redCommentStroke"]);
+        if (!found) continue;
+        const comp = found.comp;
+        if (comp.isSelected) return comp;
+      }
+      // fallback: the visible page element
+      for (const el of els) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0 && el.offsetParent !== null) {
+          const found = QS.angular.findComp(el, ["redCommentStroke"]);
+          if (found) return found.comp;
+        }
+      }
+      return null;
     } catch (e) {
       return null;
     }
@@ -160,12 +177,82 @@ QS.marking = (function () {
     }
   }
 
+  // ---------- typed comment (text → real ink strokes) ----------
+
   /**
-   * Add a typed text element to the current page's red-comment ink at
-   * (x, y) — page-image coordinates. Constructs the SDK's text item
-   * (InkPenType.Old_KesText) directly, writes it into the stroke layer +
-   * model + redCommentList (save source) via the app's own sync.
-   * Returns { ok, message }.
+   * Build SDK-format red-pen stroke items from rasterized runs.
+   * runs = [{ cs: ["x|y|t", ...], width }]; the loader treats 3-part cells
+   * ("x|y|t") with the stationery's width, auto-assigns pen modes and adds
+   * the pen-up cell. Returns the items to append (st = red ballpoint pen).
+   */
+  function buildRedCommentItems(runs, pageIndex, startItm) {
+    const items = [];
+    let itm = startItm;
+    for (const run of runs) {
+      if (!run || !Array.isArray(run.cs) || run.cs.length === 0) continue;
+      items.push({
+        st: { tp: 0, col: "#FF0000", w: 1, minw: 1, maxw: 1 }, // Old_BallpointPen, red
+        t: itm,
+        cs: run.cs.slice(),
+      });
+      itm++;
+    }
+    return items;
+  }
+
+  /**
+   * Rasterize the text into horizontal ink runs. Draws the text on an
+   * offscreen canvas, then walks the pixel rows (step 2) collecting contiguous
+   * opaque segments as "x|y|t" cells. Pure-ish (needs a canvas); never throws.
+   */
+  function rasterizeTextToRuns(text, x, y, fontSize, canvasFactory) {
+    try {
+      const make = canvasFactory || (() => document.createElement("canvas"));
+      const canvas = make();
+      const ctx = canvas.getContext("2d");
+      const fs = fontSize || 36;
+      const font = `${fs}px "Comic Sans MS", "Comic Sans", cursive, sans-serif`;
+      ctx.font = font;
+      const width = Math.ceil(ctx.measureText(text).width) + 4;
+      const height = Math.ceil(fs * 1.4) + 4;
+      canvas.width = width;
+      canvas.height = height;
+      ctx.font = font;
+      ctx.fillStyle = "#000";
+      ctx.textBaseline = "top";
+      ctx.fillText(text, 2, 2);
+      const data = ctx.getImageData(0, 0, width, height).data;
+      const runs = [];
+      let t = 0;
+      const step = 2;
+      for (let row = 0; row < height; row += step) {
+        let col = 0;
+        while (col < width) {
+          // find a run start: an opaque pixel
+          if (data[(row * width + col) * 4 + 3] < 128) {
+            col++;
+            continue;
+          }
+          let end = col;
+          while (end < width && data[(row * width + end) * 4 + 3] >= 128) end++;
+          const cells = [];
+          for (let c = col; c < end; c += 2) {
+            cells.push(`${Math.round(x + c)}|${Math.round(y + row)}|${t}`);
+            t++;
+          }
+          runs.push({ cs: cells, width: end - col });
+          col = end;
+        }
+      }
+      return runs;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /**
+   * Add a typed comment to the current page's red-comment ink at (x, y) —
+   * page-image coordinates — as REAL red-pen strokes. Returns { ok, message }.
    */
   async function addTypedComment(text, x, y) {
     try {
@@ -173,10 +260,9 @@ QS.marking = (function () {
       if (!screen) return { ok: false, message: "marking screen not found" };
       const page = findPageComp(screen);
       if (!page || !page.model) return { ok: false, message: "worksheet page not found" };
-      if (typeof window.InkTool === "undefined" || !window.InkTool.InkPenType) {
-        return { ok: false, message: "InkTool SDK unavailable" };
-      }
-      const pageIndex = page.pagePath ? Number(page.pagePath.pageIndex) : 0;
+      if (!text) return { ok: false, message: "empty comment" };
+      const runs = rasterizeTextToRuns(text, Number(x) || 0, Number(y) || 0, 36);
+      if (runs.length === 0) return { ok: false, message: "could not rasterize the text" };
       // the red-comment ink for this page (JSON string, or null when unused)
       let inkStr = page.redCommentStroke && page.redCommentStroke.inkData ? page.redCommentStroke.inkData : page.model.redComment;
       let obj;
@@ -187,31 +273,17 @@ QS.marking = (function () {
       }
       if (!obj || typeof obj !== "object") obj = { is: [] };
       if (!Array.isArray(obj.is)) obj.is = [];
-      // item number: one past the largest existing (the SDK sorts by t)
       let itm = 0;
       for (const it of obj.is) {
         const t = it && it.t !== undefined ? Number(it.t) : 0;
         if (Number.isFinite(t) && t >= itm) itm = t + 1;
       }
-      const item = {
-        // full InkText stationery (matches what the SDK serializes for text
-        // items — the loader creates the stationery from st.tp; col default
-        // black renders readably on the worksheet)
-        st: { tp: window.InkTool.InkPenType.Old_KesText, col: "black", w: 1, minw: 1, maxw: 1 },
-        t: itm,
-        kmn: {
-          qu: 0,
-          ar: 0,
-          tr: pageIndex,
-          sd: 0,
-          si: 0,
-          tx: text,
-          txtRect: { x: Number(x) || 0, y: Number(y) || 0, width: Math.max(40, text.length * 8), height: 20 },
-        },
-      };
-      obj.is.push(item);
+      const items = buildRedCommentItems(runs, 0, itm);
+      for (const item of items) obj.is.push(item);
       const newInk = JSON.stringify(obj);
-      // write into every layer the app reads, then sync + re-render
+      // write into every layer the app reads (the wrapper setter loads the ink
+      // into the SDK canvas: inkData = X → canvas.loadInk(X)), sync the save
+      // source, then force the redraw.
       if (page.redCommentStroke) page.redCommentStroke.inkData = newInk;
       if (page.model) page.model.redComment = newInk;
       if (typeof page.updateRedComment === "function") {
@@ -223,14 +295,11 @@ QS.marking = (function () {
       }
       if (typeof page.updateStrokes === "function") {
         try {
-          page.updateStrokes(); // re-sync the stroke layers from the model
+          page.updateStrokes();
         } catch (e) {
           /* best-effort */
         }
       }
-      // FORCE the canvas redraw — the app never calls this for the red layer
-      // (only the study layer gets prepareForPlay); without it the new ink
-      // sits in the model but never renders.
       try {
         const canvas = page.redCommentStroke && page.redCommentStroke.canvas;
         if (canvas && typeof canvas.redrawInk === "function") canvas.redrawInk();
@@ -238,37 +307,10 @@ QS.marking = (function () {
       } catch (e) {
         /* best-effort */
       }
-      return { ok: true };
+      return { ok: true, strokes: items.length };
     } catch (err) {
       return { ok: false, message: String(err && err.message ? err.message : err) };
     }
-  }
-
-  /**
-   * Build the SDK text item for the red-comment ink (InkPenType.Old_KesText).
-   * ink = the parsed ink object ({is: [...]}); returns the item to push.
-   * Pure — no SDK access needed.
-   */
-  function buildTextItem(ink, pageIndex, text, x, y) {
-    let itm = 0;
-    const items = ink && Array.isArray(ink.is) ? ink.is : [];
-    for (const it of items) {
-      const t = it && it.t !== undefined ? Number(it.t) : 0;
-      if (Number.isFinite(t) && t >= itm) itm = t + 1;
-    }
-    return {
-      st: { tp: 23 }, // InkPenType.Old_KesText (numeric, SDK-agnostic in tests)
-      t: itm,
-      kmn: {
-        qu: 0,
-        ar: 0,
-        tr: pageIndex,
-        sd: 0,
-        si: 0,
-        tx: text,
-        txtRect: { x: Number(x) || 0, y: Number(y) || 0, width: Math.max(40, text.length * 8), height: 20 },
-      },
-    };
   }
 
   return {
@@ -276,7 +318,8 @@ QS.marking = (function () {
     rightCodeFor,
     markPageQuestions,
     isTypingTarget,
-    buildTextItem,
+    buildRedCommentItems,
+    rasterizeTextToRuns,
     findScreen,
     findPageComp,
     markAll,

@@ -1,7 +1,7 @@
 // test/marking.test.js — pure logic for the Quick Mark marking-screen features
 import { test, expect } from "bun:test";
 await import("../src/marking.js");
-const { markPageQuestions, rightCodeFor, isTypingTarget, buildTextItem } = globalThis.QS.marking;
+const { markPageQuestions, rightCodeFor, isTypingTarget, buildRedCommentItems } = globalThis.QS.marking;
 
 // a realistic gradingResultData slice (from the live sample, 2026-08-05)
 function samplePage() {
@@ -75,21 +75,25 @@ test("isTypingTarget guards shortcuts while typing", () => {
   expect(isTypingTarget(body)).toBe(false);
 });
 
-test("buildTextItem produces the SDK text item with ordered numbering", () => {
-  const ink = { is: [{ t: 0 }, { t: 2 }] };
-  const item = buildTextItem(ink, 1, "Great work!", 120, 80);
-  expect(item.st.tp).toBe(23); // InkPenType.Old_KesText
-  expect(item.t).toBe(3); // one past the max existing item number
-  expect(item.kmn.tx).toBe("Great work!");
-  expect(item.kmn.tr).toBe(1); // page index
-  expect(item.kmn.txtRect).toEqual({ x: 120, y: 80, width: 88, height: 20 }); // 11 chars * 8
+test("buildRedCommentItems produces SDK-format stroke items with red pen", () => {
+  // cells: "x|y|t" strings (3-part form → the loader applies the stationery width)
+  const items = buildRedCommentItems([
+    { cs: ["10|20|0", "15|20|1"], width: 100 },
+    { cs: ["10|30|2"], width: 40 },
+  ], 2, 5);
+  expect(items.length).toBe(2);
+  const it = items[0];
+  expect(it.st.tp).toBe(0); // Old_BallpointPen — renders in any ink layer
+  expect(it.st.col).toBe("#FF0000"); // the red pen
+  expect(it.st.w).toBe(1);
+  expect(it.t).toBe(5); // item numbering continues
+  expect(it.cs).toEqual(["10|20|0", "15|20|1"]);
+  expect(items[1].t).toBe(6);
+  expect(items[1].cs).toEqual(["10|30|2"]);
 });
 
-test("buildTextItem handles empty inks and zero items", () => {
-  const item = buildTextItem({ is: [] }, 0, "hi", 0, 0);
-  expect(item.t).toBe(0);
-  expect(item.kmn.txtRect.x).toBe(0);
-  const item2 = buildTextItem(null, 0, "hi", 10, 10);
-  expect(item2.t).toBe(0);
-  expect(item2.kmn.txtRect.width).toBeGreaterThanOrEqual(40);
+test("buildRedCommentItems ignores empty runs and starts numbering from the ink", () => {
+  const items = buildRedCommentItems([{ cs: [] }, { cs: ["1|1|0"] }], 1, 3);
+  expect(items.length).toBe(1);
+  expect(items[0].t).toBe(3);
 });
