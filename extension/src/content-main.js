@@ -87,26 +87,33 @@ mo.observe(document.documentElement, { childList: true, subtree: true });
 // ---------- Quick Mark: toolbar placement ----------
 
 /**
- * Keep our button stack directly BELOW the native toolbar's visual bottom.
- * The toolbar box (grading-toolbar-box) collapses to 40x40 and expands into
- * a tall stack (tools + page up/down + two more buttons) — our buttons must
- * always sit below that entire stack, so we track the box's bottom edge and
- * re-place on every resize.
+ * Keep our button stack BELOW the entire native control stack. The
+ * worksheet-tool container holds, top to bottom: toolbar box, zoom button,
+ * page pager (up/down), one-side display switch, and the answer-display
+ * button — some are conditionally rendered, so we anchor to the LOWEST
+ * control currently present and re-place on every resize.
  */
 function positionQuickMarkToolbar() {
   try {
     const wrap = document.getElementById("qs-mark-toolbar");
     const tb = document.querySelector("app-grading-toolbar");
     if (!wrap || !tb) return;
-    const panel = tb.parentElement;
-    if (!panel) return;
-    const box = tb.querySelector(".grading-toolbar-box") || tb;
-    const tbRect = box.getBoundingClientRect();
-    const pRect = panel.getBoundingClientRect();
+    const tool = tb.closest(".worksheet-tool") || tb.parentElement;
+    if (!tool) return;
+    const selectors = [".answer-zoom-btn", ".pager", ".display-mode-switch", ".answer-disp-btn", "app-grading-toolbar"];
+    let bottom = 0;
+    for (const sel of selectors) {
+      const el = tool.querySelector(sel);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (r.bottom > bottom) bottom = r.bottom;
+    }
+    if (bottom <= 0) return;
+    const tRect = tool.getBoundingClientRect();
     wrap.style.position = "absolute";
     wrap.style.left = "2px";
     wrap.style.right = "2px";
-    wrap.style.top = `${Math.max(4, tbRect.bottom - pRect.top + 6)}px`;
+    wrap.style.top = `${Math.max(4, bottom - tRect.top + 6)}px`;
     wrap.style.marginTop = "0";
     wrap.style.zIndex = "99990";
   } catch (e) {
@@ -483,9 +490,9 @@ function bootMarking() {
     const erase = mk("🗑 Erase all ink", MARK_BTN_STYLE.replace("#c0392b", "#b9770e"), "Clear ALL red ink on this page (typed comments + pen marks)", () =>
       QS.marking.clearPageRedInk()
     );
-    // our buttons live in a wrapping container, placed BELOW the native
-    // toolbar (sibling in the grading panel, not a child of the cramped
-    // toolbar row — the panel column is clear of the worksheet)
+    // our buttons live in a wrapping container, placed BELOW the whole
+    // native control stack (attached to worksheet-tool, the container that
+    // holds the toolbar box + zoom + pager + display switches)
     const wrap = document.createElement("div");
     wrap.id = "qs-mark-toolbar";
     wrap.style.cssText =
@@ -495,8 +502,8 @@ function bootMarking() {
     wrap.appendChild(pen);
     wrap.appendChild(calib);
     wrap.appendChild(erase);
-    const panel = toolbar.parentElement;
-    if (panel) panel.appendChild(wrap);
+    const tool = toolbar.closest(".worksheet-tool") || toolbar.parentElement;
+    if (tool) tool.appendChild(wrap);
     else toolbar.appendChild(wrap);
     // position below the toolbar box and re-place whenever it resizes
     // (open/close) — the box can be recreated by Angular, so a slow interval
