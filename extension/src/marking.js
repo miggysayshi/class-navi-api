@@ -230,23 +230,25 @@ QS.marking = (function () {
   }
 
   /**
-   * AUTO calibration: the page canvas element's rect IS the page box — its
-   * top-left corner = ink (0, 0), its bottom-right = ink (imgW, imgH).
-   * Measuring it derives scale + offset exactly, no clicks needed. Returns
-   * the calibration, or null when the canvas can't be found.
+   * AUTO calibration: the page element (#pageID — a div.worksheet-container)
+   * IS the page box; its IMG and canvases all sit exactly on its rect. Its
+   * top-left corner = ink (0, 0), so measuring it derives scale + offset
+   * exactly, no clicks needed. Returns the calibration or null.
    */
   function autoCalibratePage(page) {
     try {
       if (!page || !page.model) return null;
       const img = page.model.imgSize || {};
       if (!Number(img.width) || !Number(img.height)) return null;
-      const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`);
-      if (!container) return null;
-      const canvasEl = container.querySelector("canvas");
-      if (!canvasEl) return null;
-      const rect = canvasEl.getBoundingClientRect();
-      const cRect = container.getBoundingClientRect();
+      const el = page.pageID ? document.getElementById(page.pageID) : null;
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
       if (rect.width < 2 || rect.height < 2) return null;
+      // container reference: the app's wrapper class when present, else the
+      // screen origin — screenToInk uses the SAME rule, so ox/oy stay
+      // consistent either way
+      const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`);
+      const cRect = container ? container.getBoundingClientRect() : { left: 0, top: 0 };
       const cal = {
         ox: rect.left - cRect.left,
         oy: rect.top - cRect.top,

@@ -418,13 +418,12 @@ function bootMarking() {
   try {
     if (markingToolbarInjected) {
       // the screen can close and reopen per set — detect the toolbar re-appearing
-      const tb = document.querySelector("app-grading-toolbar");
-      if (!tb || tb.querySelector(".qs-mark-btn")) return;
+      if (document.getElementById("qs-mark-toolbar")) return;
       markingToolbarInjected = false;
     }
     const toolbar = document.querySelector("app-grading-toolbar");
     if (!toolbar || !QS.marking.findScreen()) return;
-    if (toolbar.querySelector(".qs-mark-btn")) return;
+    if (document.getElementById("qs-mark-toolbar")) return;
     markingToolbarInjected = true;
     ensureMarkingShortcuts();
     const mk = (label, style, title, fn) => {
@@ -454,17 +453,21 @@ function bootMarking() {
     const erase = mk("🗑 Erase all ink", MARK_BTN_STYLE.replace("#c0392b", "#b9770e"), "Clear ALL red ink on this page (typed comments + pen marks)", () =>
       QS.marking.clearPageRedInk()
     );
-    // our buttons live in a wrapping container: full titles on one line
-    // each; if the row runs out of space the buttons wrap as a GROUP
+    // our buttons live in a wrapping container, placed BELOW the native
+    // toolbar (sibling in the grading panel, not a child of the cramped
+    // toolbar row — the panel column is clear of the worksheet)
     const wrap = document.createElement("div");
     wrap.id = "qs-mark-toolbar";
-    wrap.style.cssText = "display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;margin-left:6px;flex:0 0 auto;max-width:100%;";
+    wrap.style.cssText =
+      "display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:6px 2px 0;flex:0 0 auto;max-width:100%;";
     wrap.appendChild(all);
     wrap.appendChild(none);
     wrap.appendChild(pen);
     wrap.appendChild(calib);
     wrap.appendChild(erase);
-    toolbar.appendChild(wrap);
+    const panel = toolbar.parentElement;
+    if (panel) panel.appendChild(wrap);
+    else toolbar.appendChild(wrap);
     console.log("[QuickMark] marking toolbar injected");
   } catch (err) {
     console.warn("[QuickMark] boot failed:", err);
