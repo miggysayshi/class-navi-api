@@ -213,16 +213,54 @@ QS.marking = (function () {
     }
   }
 
-  /** The active calibration for a page: page-level first, then screen-level. */
+  /** The active calibration for a page: MANUAL (corner clicks) wins, then
+   *  AUTO (canvas-rect), then anything else set (empirical check-icon). */
   function getCalibration(page) {
-    if (page && page.__qsCalibration) return page.__qsCalibration;
     try {
       const screen = findScreen();
-      if (screen && screen.__qsCalibration) return screen.__qsCalibration;
+      const candidates = [page && page.__qsCalibration, screen && screen.__qsCalibration].filter(Boolean);
+      const manual = candidates.find((c) => c.manual);
+      if (manual) return manual;
+      const auto = candidates.find((c) => c.auto);
+      if (auto) return auto;
+      return candidates[0] || null;
     } catch (e) {
-      /* best-effort */
+      return null;
     }
-    return null;
+  }
+
+  /**
+   * AUTO calibration: the page canvas element's rect IS the page box — its
+   * top-left corner = ink (0, 0), its bottom-right = ink (imgW, imgH).
+   * Measuring it derives scale + offset exactly, no clicks needed. Returns
+   * the calibration, or null when the canvas can't be found.
+   */
+  function autoCalibratePage(page) {
+    try {
+      if (!page || !page.model) return null;
+      const img = page.model.imgSize || {};
+      if (!Number(img.width) || !Number(img.height)) return null;
+      const container = document.querySelector(`.worksheet-container-wrapper:has(#${page.pageID})`);
+      if (!container) return null;
+      const canvasEl = container.querySelector("canvas");
+      if (!canvasEl) return null;
+      const rect = canvasEl.getBoundingClientRect();
+      const cRect = container.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) return null;
+      const cal = {
+        ox: rect.left - cRect.left,
+        oy: rect.top - cRect.top,
+        sx: rect.width / Number(img.width),
+        sy: rect.height / Number(img.height),
+        auto: true,
+      };
+      if (page) page.__qsCalibration = cal;
+      const screen = findScreen();
+      if (screen) screen.__qsCalibration = cal;
+      return cal;
+    } catch (e) {
+      return null;
+    }
   }
 
   /**
@@ -463,38 +501,18 @@ QS.marking = (function () {
   }
 
   /**
-   * Remove every typed comment from the CURRENT page (only the items this
-   * extension placed — drawn pen marks are untouched). Returns
-   * { ok, removed, message }.
+   * Clear ALL red ink on the current page — typed comments AND drawn pen
+   * marks (the red layer is one ink stream). Returns { ok, message }.
    */
-  async function erasePageComments() {
+  async function clearPageRedInk() {
     try {
       const screen = findScreen();
       if (!screen) return { ok: false, message: "marking screen not found" };
       const page = findPageComp(screen);
       if (!page || !page.model) return { ok: false, message: "worksheet page not found" };
-      const key = pageKeyOf(page);
-      const tset = new Set(commentItems[key] || []);
-      if (tset.size === 0) return { ok: false, message: "no typed comments on this page" };
-      let inkStr = page.redCommentStroke && page.redCommentStroke.inkData ? page.redCommentStroke.inkData : page.model.redComment;
-      let obj;
-      try {
-        obj = JSON.parse(typeof inkStr === "string" ? inkStr : JSON.stringify(inkStr || { is: [] }));
-      } catch (e) {
-        obj = { is: [] };
-      }
-      if (!obj || typeof obj !== "object") obj = { is: [] };
-      if (!Array.isArray(obj.is)) obj.is = [];
-      const before = obj.is.length;
-      obj.is = obj.is.filter((it) => !(it && tset.has(Number(it.t))));
-      const removed = before - obj.is.length;
-      if (removed === 0) {
-        delete commentItems[key];
-        return { ok: false, message: "no typed comments found in the ink" };
-      }
-      const newInk = JSON.stringify(obj);
-      if (page.redCommentStroke) page.redCommentStroke.inkData = newInk;
-      if (page.model) page.model.redComment = newInk;
+      const empty = JSON.stringify({ is: [] });
+      if (page.redCommentStroke) page.redCommentStroke.inkData = empty;
+      if (page.model) page.model.redComment = empty;
       if (typeof page.updateRedComment === "function") {
         try {
           page.updateRedComment();
@@ -516,8 +534,9 @@ QS.marking = (function () {
       } catch (e) {
         /* best-effort */
       }
+      const key = pageKeyOf(page);
       delete commentItems[key];
-      return { ok: true, removed };
+      return { ok: true, message: "all red ink cleared on this page" };
     } catch (err) {
       return { ok: false, message: String(err && err.message ? err.message : err) };
     }
@@ -607,7 +626,8 @@ QS.marking = (function () {
     buildRedCommentItems,
     rasterizeTextToRuns,
     drawRunsOnCanvas,
-    erasePageComments,
+    clearPageRedInk,
+    autoCalibratePage,
     findScreen,
     findPageComp,
     markAll,

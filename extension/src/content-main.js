@@ -87,7 +87,7 @@ mo.observe(document.documentElement, { childList: true, subtree: true });
 // ---------- Quick Mark: marking screen (ATD0020P) ----------
 
 const MARK_BTN_STYLE =
-  "padding:4px 8px;border:1px solid #c0392b;border-radius:4px;background:#fff;color:#c0392b;cursor:pointer;font-size:12px;font-weight:600;margin:0 2px;";
+  "padding:4px 8px;border:1px solid #c0392b;border-radius:4px;background:#fff;color:#c0392b;cursor:pointer;font-size:12px;font-weight:600;margin:0 2px;white-space:nowrap;flex:0 0 auto;";
 const MARK_BTN_GREEN_STYLE = MARK_BTN_STYLE.replace("#c0392b", "#1e8449");
 const MARK_BTN_BLUE_STYLE = MARK_BTN_STYLE.replace("#c0392b", "#2a6df4");
 
@@ -188,8 +188,10 @@ let commentUI = null; // {hud, input, sizeLabel, styleBtn, preview, sizeIdx, sty
 
 function previewScale() {
   const page = commentUI && commentUI.page;
-  const sx = page && Number(page.scaleX) > 0 ? Number(page.scaleX) : 1;
-  const sy = page && Number(page.scaleY) > 0 ? Number(page.scaleY) : 1;
+  if (!page) return { sx: 1, sy: 1 };
+  const cal = QS.marking.getCalibration(page);
+  const sx = cal && cal.sx > 0 ? Number(cal.sx) : Number(page.scaleX) > 0 ? Number(page.scaleX) : 1;
+  const sy = cal && cal.sy > 0 ? Number(cal.sy) : Number(page.scaleY) > 0 ? Number(page.scaleY) : 1;
   return { sx, sy };
 }
 
@@ -250,16 +252,24 @@ function enterCommentMode() {
     const page = QS.marking.findPageComp(screen);
     if (!screen || !page) return;
     if (commentUI) return; // already active
-    // empirically calibrate the ink→screen transform (check-icon based) —
-    // absorbs container borders, canvas centering, and any shell zoom.
-    // A MANUAL corner calibration overrides the empirical one.
+    // AUTO calibrate first: measure the page canvas element — its rect IS
+    // the page box (top-left = ink 0,0), so scale + offset are exact with
+    // no clicks. A MANUAL corner calibration overrides everything.
     const existing = QS.marking.getCalibration(page);
     if (!existing || !existing.manual) {
-      const cal = QS.marking.calibratePage(page);
-      if (cal) {
-        console.log(`[QuickMark] calibration: offset (${cal.ox}, ${cal.oy})px` + (cal.sx ? `, scale verified ${cal.sx}` : ""));
+      const auto = QS.marking.autoCalibratePage(page);
+      if (auto) {
+        console.log(
+          `[QuickMark] auto calibration: scale (${auto.sx.toFixed(4)}, ${auto.sy.toFixed(4)}), offset (${auto.ox}, ${auto.oy})px`
+        );
       } else {
-        console.warn("[QuickMark] calibration: no icon match found — falling back to container math");
+        // fallback: empirical check-icon calibration
+        const cal = QS.marking.calibratePage(page);
+        if (cal) {
+          console.log(`[QuickMark] calibration: offset (${cal.ox}, ${cal.oy})px` + (cal.sx ? `, scale verified ${cal.sx}` : ""));
+        } else {
+          console.warn("[QuickMark] calibration: no page canvas or icon match — falling back to container math");
+        }
       }
     }
     const ui = (commentUI = {
@@ -441,14 +451,20 @@ function bootMarking() {
       enterCalibrationMode();
       return { ok: true };
     });
-    const erase = mk("🗑 Erase texts", MARK_BTN_STYLE.replace("#c0392b", "#b9770e"), "Remove all typed comments from this page (drawn pen marks stay)", () =>
-      QS.marking.erasePageComments()
+    const erase = mk("🗑 Erase all ink", MARK_BTN_STYLE.replace("#c0392b", "#b9770e"), "Clear ALL red ink on this page (typed comments + pen marks)", () =>
+      QS.marking.clearPageRedInk()
     );
-    toolbar.appendChild(all);
-    toolbar.appendChild(none);
-    toolbar.appendChild(pen);
-    toolbar.appendChild(calib);
-    toolbar.appendChild(erase);
+    // our buttons live in a wrapping container: full titles on one line
+    // each; if the row runs out of space the buttons wrap as a GROUP
+    const wrap = document.createElement("div");
+    wrap.id = "qs-mark-toolbar";
+    wrap.style.cssText = "display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px;margin-left:6px;flex:0 0 auto;max-width:100%;";
+    wrap.appendChild(all);
+    wrap.appendChild(none);
+    wrap.appendChild(pen);
+    wrap.appendChild(calib);
+    wrap.appendChild(erase);
+    toolbar.appendChild(wrap);
     console.log("[QuickMark] marking toolbar injected");
   } catch (err) {
     console.warn("[QuickMark] boot failed:", err);
