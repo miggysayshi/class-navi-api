@@ -84,6 +84,36 @@ const mo = new MutationObserver(() => {
 });
 mo.observe(document.documentElement, { childList: true, subtree: true });
 
+// ---------- Quick Mark: toolbar placement ----------
+
+/**
+ * Keep our button stack directly BELOW the native toolbar's visual bottom.
+ * The toolbar box (grading-toolbar-box) collapses to 40x40 and expands into
+ * a tall stack (tools + page up/down + two more buttons) — our buttons must
+ * always sit below that entire stack, so we track the box's bottom edge and
+ * re-place on every resize.
+ */
+function positionQuickMarkToolbar() {
+  try {
+    const wrap = document.getElementById("qs-mark-toolbar");
+    const tb = document.querySelector("app-grading-toolbar");
+    if (!wrap || !tb) return;
+    const panel = tb.parentElement;
+    if (!panel) return;
+    const box = tb.querySelector(".grading-toolbar-box") || tb;
+    const tbRect = box.getBoundingClientRect();
+    const pRect = panel.getBoundingClientRect();
+    wrap.style.position = "absolute";
+    wrap.style.left = "2px";
+    wrap.style.right = "2px";
+    wrap.style.top = `${Math.max(4, tbRect.bottom - pRect.top + 6)}px`;
+    wrap.style.marginTop = "0";
+    wrap.style.zIndex = "99990";
+  } catch (e) {
+    /* never throw */
+  }
+}
+
 // ---------- Quick Mark: marking screen (ATD0020P) ----------
 
 const MARK_BTN_STYLE =
@@ -468,6 +498,23 @@ function bootMarking() {
     const panel = toolbar.parentElement;
     if (panel) panel.appendChild(wrap);
     else toolbar.appendChild(wrap);
+    // position below the toolbar box and re-place whenever it resizes
+    // (open/close) — the box can be recreated by Angular, so a slow interval
+    // backs up the ResizeObserver
+    positionQuickMarkToolbar();
+    if (window.ResizeObserver) {
+      try {
+        const ro = new ResizeObserver(() => positionQuickMarkToolbar());
+        const box = toolbar.querySelector(".grading-toolbar-box") || toolbar;
+        ro.observe(box);
+        ro.observe(toolbar);
+      } catch (e) {
+        /* best-effort */
+      }
+    }
+    if (!window.__qsToolbarPinger) {
+      window.__qsToolbarPinger = setInterval(positionQuickMarkToolbar, 1000);
+    }
     console.log("[QuickMark] marking toolbar injected");
   } catch (err) {
     console.warn("[QuickMark] boot failed:", err);
