@@ -1,7 +1,7 @@
 // test/marking.test.js — pure logic for the Quick Mark marking-screen features
 import { test, expect } from "bun:test";
 await import("../src/marking.js");
-const { markPageQuestions, rightCodeFor, isTypingTarget, buildRedCommentItems, computeInk, computeManualCalibration, rasterizeTextToRuns } = globalThis.QS.marking;
+const { markPageQuestions, rightCodeFor, isTypingTarget, buildRedCommentItems, computeInk, computeManualCalibration, rasterizeTextToRuns, drawRunsOnCanvas } = globalThis.QS.marking;
 
 // a realistic gradingResultData slice (from the live sample, 2026-08-05)
 function samplePage() {
@@ -112,7 +112,7 @@ test("computeInk inverts the app's scale with the container origin", () => {
 
 test("rasterizeTextToRuns produces x|y|t cells from a fake canvas bitmap", () => {
   const width = 14; // measureText(10) + 4
-  const height = 55; // ceil(36 * 1.4) + 4
+  const height = 57; // single line: ceil(36·1.4)+2 + 4
   // a fake canvas: opaque pixels in rows 2 and 6, columns 3-6 (a mini "glyph")
   const pixels = new Uint8ClampedArray(width * height * 4);
   const opaque = (row, col) => {
@@ -170,4 +170,47 @@ test("computeManualCalibration round-trips through screenToInk math", () => {
   // and the first corner maps to ink (0, 0)
   expect((200 - 100 - cal.ox) / cal.sx).toBeCloseTo(0, 4);
   expect((150 - 50 - cal.oy) / cal.sy).toBeCloseTo(0, 4);
+});
+
+test("rasterizeTextToRuns handles multiple lines", () => {
+  // two-line text: line pitch = ceil(36·1.4)+2 = 53 → lines at rows 2 and 55
+  const width = 14;
+  const height = 110; // 2 lines × 53 + 4
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  const opaque = (row, col) => {
+    const i = (row * width + col) * 4;
+    pixels[i + 3] = 255;
+  };
+  for (let c = 3; c <= 6; c++) {
+    opaque(2, c); // line 1
+    opaque(54, c); // line 2 (even rows only — the scanner steps by 2)
+  }
+  const fakeCtx = {
+    font: "",
+    measureText: () => ({ width: 10 }),
+    fillText: () => {},
+    getImageData: () => ({ data: pixels }),
+  };
+  const fakeCanvas = { width: 0, height: 0, getContext: () => fakeCtx };
+  const runs = rasterizeTextToRuns("a\nb", 100, 200, 36, '"Arial"', () => fakeCanvas);
+  expect(runs.length).toBe(2);
+  const ys = runs.map((r) => Number(r.cs[0].split("|")[1]));
+  expect([200, 252]).toEqual(expect.arrayContaining(ys)); // rows 2 and 54 − 2px margin
+});
+
+test("drawRunsOnCanvas draws the runs scaled to screen", () => {
+  const points = [];
+  const fakeCtx = {
+    clearRect: () => {},
+    beginPath: () => {},
+    moveTo: (x, y) => points.push(["m", x, y]),
+    lineTo: (x, y) => points.push(["l", x, y]),
+    stroke: () => {},
+  };
+  const fakeCanvas = { width: 100, height: 100, getContext: () => fakeCtx };
+  drawRunsOnCanvas(fakeCanvas, [{ cs: ["10|20|0", "15|20|1"] }], 2, 2);
+  expect(points).toEqual([
+    ["m", 20, 40],
+    ["l", 30, 40],
+  ]);
 });

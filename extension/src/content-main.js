@@ -195,14 +195,37 @@ function previewScale() {
 
 function updateCommentPreview() {
   if (!commentUI) return;
-  const text = commentUI.input.value.trim() || "Aa";
-  const { sx } = previewScale();
-  commentUI.preview.textContent = text;
-  const s = QS_COMMENT_STYLES[commentUI.styleIdx];
-  commentUI.preview.style.font = `${QS_COMMENT_SIZES[commentUI.sizeIdx] * sx}px ${s.font}`;
-  commentUI.preview.style.display = text ? "block" : "none";
-  commentUI.sizeLabel.textContent = QS_COMMENT_SIZES[commentUI.sizeIdx];
-  commentUI.styleBtn.textContent = s.name;
+  const text = commentUI.input.value;
+  if (!text.trim()) {
+    commentUI.preview.style.display = "none";
+    commentUI.sizeLabel.textContent = QS_COMMENT_SIZES[commentUI.sizeIdx];
+    commentUI.styleBtn.textContent = QS_COMMENT_STYLES[commentUI.styleIdx].name;
+    return;
+  }
+  const { sx, sy } = previewScale();
+  const size = QS_COMMENT_SIZES[commentUI.sizeIdx];
+  const family = QS_COMMENT_STYLES[commentUI.styleIdx].font;
+  // render the ACTUAL ink the placement will produce: same rasterizer, same
+  // runs, drawn at the screen scale — the preview IS the placed ink
+  const runs = QS.marking.rasterizeTextToRuns(text, 0, 0, size, family);
+  let w = 1;
+  let h = 1;
+  for (const run of runs) {
+    for (const cell of run.cs) {
+      const p = cell.split("|");
+      const px = Number(p[0]) * sx;
+      const py = Number(p[1]) * sy;
+      if (px > w) w = px;
+      if (py > h) h = py;
+    }
+  }
+  const canvas = commentUI.preview;
+  canvas.width = Math.ceil(w) + 2;
+  canvas.height = Math.ceil(h) + 2;
+  QS.marking.drawRunsOnCanvas(canvas, runs, sx, sy);
+  canvas.style.display = "block";
+  commentUI.sizeLabel.textContent = size;
+  commentUI.styleBtn.textContent = QS_COMMENT_STYLES[commentUI.styleIdx].name;
 }
 
 function positionCommentPreview() {
@@ -251,10 +274,11 @@ function enterCommentMode() {
     hud.id = "qs-comment-hud";
     hud.style.cssText =
       "position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;background:#fff;border:1px solid #2a6df4;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.25);padding:8px 10px;display:flex;align-items:center;gap:6px;font-size:12px;";
-    const input = document.createElement("input");
-    input.type = "text";
-    input.placeholder = "Type a comment — click or Enter to place, Esc cancels";
-    input.style.cssText = "width:230px;padding:5px 8px;border:1px solid #bbb;border-radius:4px;font-size:13px;";
+    const input = document.createElement("textarea");
+    input.rows = 2;
+    input.placeholder = "Type a comment — Enter for a new line, click or Ctrl+Enter to place, Esc cancels";
+    input.style.cssText =
+      "width:230px;padding:5px 8px;border:1px solid #bbb;border-radius:4px;font-size:13px;resize:none;font-family:inherit;line-height:1.3;";
     input.addEventListener("input", updateCommentPreview);
     const mkBtn = (label, title, fn) => {
       const b = document.createElement("button");
@@ -293,12 +317,12 @@ function enterCommentMode() {
     ui.sizeLabel = sizeLabel;
     ui.styleBtn = styleBtn;
     document.body.appendChild(hud);
-    // the live preview overlay — follows the cursor, shows the exact text,
-    // font, size, and color at the exact placement scale
-    const preview = document.createElement("div");
+    // the live preview — a CANVAS rendering the actual rasterized runs at
+    // screen scale: what you see is EXACTLY the ink that will be placed
+    // (same rasterizer, same strokes, same color)
+    const preview = document.createElement("canvas");
     preview.id = "qs-comment-preview";
-    preview.style.cssText =
-      "position:fixed;z-index:99998;pointer-events:none;color:#e74c3c;opacity:.55;white-space:pre;line-height:1;margin:0;";
+    preview.style.cssText = "position:fixed;z-index:99998;pointer-events:none;opacity:.55;";
     ui.preview = preview;
     document.body.appendChild(preview);
     updateCommentPreview();
@@ -337,7 +361,8 @@ function enterCommentMode() {
           else console.log(`[QuickMark] comment placed: "${text}" (${r.strokes} strokes)`);
         });
     };
-    // Enter places at the last cursor position; Esc cancels
+    // Enter (with Ctrl/Cmd) places at the last cursor position; plain Enter
+    // is a newline in the textarea; Esc cancels
     const onKey = (ev) => {
       if (!commentUI) return;
       if (ev.key === "Escape") {
@@ -345,7 +370,7 @@ function enterCommentMode() {
         document.removeEventListener("click", onClick, true);
         document.removeEventListener("keydown", onKey, true);
         exitCommentMode();
-      } else if (ev.key === "Enter") {
+      } else if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
         ev.preventDefault();
         ev.stopPropagation();
         document.removeEventListener("mousemove", onMove, true);
@@ -416,10 +441,14 @@ function bootMarking() {
       enterCalibrationMode();
       return { ok: true };
     });
+    const erase = mk("🗑 Erase texts", MARK_BTN_STYLE.replace("#c0392b", "#b9770e"), "Remove all typed comments from this page (drawn pen marks stay)", () =>
+      QS.marking.erasePageComments()
+    );
     toolbar.appendChild(all);
     toolbar.appendChild(none);
     toolbar.appendChild(pen);
     toolbar.appendChild(calib);
+    toolbar.appendChild(erase);
     console.log("[QuickMark] marking toolbar injected");
   } catch (err) {
     console.warn("[QuickMark] boot failed:", err);

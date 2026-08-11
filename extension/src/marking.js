@@ -360,7 +360,8 @@ QS.marking = (function () {
   /**
    * Rasterize the text into horizontal ink runs. Draws the text on an
    * offscreen canvas, then walks the pixel rows (step 2) collecting contiguous
-   * opaque segments as "x|y|t" cells. Never throws. fontFamily is a CSS
+   * opaque segments as "x|y|t" cells. Multi-line: "\n" starts a new line
+   * (line pitch = fontSize·1.4). Never throws. fontFamily is a CSS
    * font-family value; fontSize in image pixels.
    */
   function rasterizeTextToRuns(text, x, y, fontSize, fontFamily, canvasFactory) {
@@ -371,16 +372,27 @@ QS.marking = (function () {
       const fs = fontSize || 36;
       const fam = fontFamily || '"Comic Sans MS", "Comic Sans", cursive';
       const font = `${fs}px ${fam}`;
+      const lines = String(text).split("\n");
+      const lineH = Math.ceil(fs * 1.4) + 2; // per-line pitch (2px gap between lines)
       ctx.font = font;
-      const width = Math.ceil(ctx.measureText(text).width) + 4;
-      const height = Math.ceil(fs * 1.4) + 4;
+      const widths = lines.map((l) => Math.ceil(ctx.measureText(l || "").width));
+      const width = Math.max(...widths, 1) + 4;
+      const height = Math.max(1, lines.length) * lineH + 4;
       canvas.width = width;
       canvas.height = height;
       ctx.font = font;
       ctx.fillStyle = "#000";
       ctx.textBaseline = "top";
-      ctx.fillText(text, 2, 2);
+      lines.forEach((line, idx) => {
+        if (line) ctx.fillText(line, 2, 2 + idx * lineH);
+      });
       const data = ctx.getImageData(0, 0, width, height).data;
+      // alpha at (row, col); out-of-bounds reads are TRANSPARENT — without
+      // this, undefined comparisons behave as "opaque" and can loop forever
+      const alphaAt = (row, col) => {
+        const idx = (row * width + col) * 4 + 3;
+        return idx >= 0 && idx < data.length ? data[idx] : 0;
+      };
       const runs = [];
       let t = 0;
       const step = 2;
@@ -388,12 +400,12 @@ QS.marking = (function () {
         let col = 0;
         while (col < width) {
           // find a run start: an opaque pixel
-          if (data[(row * width + col) * 4 + 3] < 128) {
+          if (alphaAt(row, col) < 128) {
             col++;
             continue;
           }
           let end = col;
-          while (end < width && data[(row * width + end) * 4 + 3] >= 128) end++;
+          while (end < width && alphaAt(row, end) >= 128) end++;
           const cells = [];
           for (let c = col; c < end; c += 2) {
             // subtract the 2px rasterizer margin so the glyph edge lands
@@ -408,6 +420,106 @@ QS.marking = (function () {
       return runs;
     } catch (e) {
       return [];
+    }
+  }
+
+  /**
+   * Draw rasterized runs onto a canvas at the given screen scale — the
+   * PREVIEW renderer. Draws the same connected segments the ink renderer
+   * produces, so the preview is literally the placed ink scaled to screen.
+   */
+  function drawRunsOnCanvas(canvas, runs, scaleX, scaleY) {
+    try {
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = "#e74c3c";
+      ctx.lineWidth = Math.max(1, 1 * (Number(scaleX) || 1));
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const run of runs) {
+        if (!run || !Array.isArray(run.cs) || run.cs.length === 0) continue;
+        ctx.beginPath();
+        for (let i = 0; i < run.cs.length; i++) {
+          const p = run.cs[i].split("|");
+          const px = Number(p[0]) * (Number(scaleX) || 1);
+          const py = Number(p[1]) * (Number(scaleY) || 1);
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+    } catch (e) {
+      /* never throw */
+    }
+  }
+
+  // session tracking of placed comment items (for "erase texts")
+  const commentItems = {}; // pageKey → [item t, ...]
+
+  function pageKeyOf(page) {
+    const p = (page && page.pagePath) || {};
+    return `${p.studySetIndex || 0}-${p.pageIndex || 0}`;
+  }
+
+  /**
+   * Remove every typed comment from the CURRENT page (only the items this
+   * extension placed — drawn pen marks are untouched). Returns
+   * { ok, removed, message }.
+   */
+  async function erasePageComments() {
+    try {
+      const screen = findScreen();
+      if (!screen) return { ok: false, message: "marking screen not found" };
+      const page = findPageComp(screen);
+      if (!page || !page.model) return { ok: false, message: "worksheet page not found" };
+      const key = pageKeyOf(page);
+      const tset = new Set(commentItems[key] || []);
+      if (tset.size === 0) return { ok: false, message: "no typed comments on this page" };
+      let inkStr = page.redCommentStroke && page.redCommentStroke.inkData ? page.redCommentStroke.inkData : page.model.redComment;
+      let obj;
+      try {
+        obj = JSON.parse(typeof inkStr === "string" ? inkStr : JSON.stringify(inkStr || { is: [] }));
+      } catch (e) {
+        obj = { is: [] };
+      }
+      if (!obj || typeof obj !== "object") obj = { is: [] };
+      if (!Array.isArray(obj.is)) obj.is = [];
+      const before = obj.is.length;
+      obj.is = obj.is.filter((it) => !(it && tset.has(Number(it.t))));
+      const removed = before - obj.is.length;
+      if (removed === 0) {
+        delete commentItems[key];
+        return { ok: false, message: "no typed comments found in the ink" };
+      }
+      const newInk = JSON.stringify(obj);
+      if (page.redCommentStroke) page.redCommentStroke.inkData = newInk;
+      if (page.model) page.model.redComment = newInk;
+      if (typeof page.updateRedComment === "function") {
+        try {
+          page.updateRedComment();
+        } catch (e) {
+          /* best-effort */
+        }
+      }
+      if (typeof page.updateStrokes === "function") {
+        try {
+          page.updateStrokes();
+        } catch (e) {
+          /* best-effort */
+        }
+      }
+      try {
+        const canvas = page.redCommentStroke && page.redCommentStroke.canvas;
+        if (canvas && typeof canvas.redrawInk === "function") canvas.redrawInk();
+        else if (canvas && typeof canvas.redrawCurrentLayerByInk === "function") canvas.redrawCurrentLayerByInk();
+      } catch (e) {
+        /* best-effort */
+      }
+      delete commentItems[key];
+      return { ok: true, removed };
+    } catch (err) {
+      return { ok: false, message: String(err && err.message ? err.message : err) };
     }
   }
 
@@ -443,6 +555,11 @@ QS.marking = (function () {
       }
       const items = buildRedCommentItems(runs, 0, itm);
       for (const item of items) obj.is.push(item);
+      // track the placed items' t values so "erase texts" can remove exactly
+      // these (the SDK drops unknown fields on load, so in-ink markers are
+      // unreliable — session tracking is deterministic)
+      const key = pageKeyOf(page);
+      commentItems[key] = (commentItems[key] || []).concat(items.map((i) => i.t));
       const newInk = JSON.stringify(obj);
       // write into every layer the app reads (the wrapper setter loads the ink
       // into the SDK canvas: inkData = X → canvas.loadInk(X)), sync the save
@@ -489,6 +606,8 @@ QS.marking = (function () {
     calibratePage,
     buildRedCommentItems,
     rasterizeTextToRuns,
+    drawRunsOnCanvas,
+    erasePageComments,
     findScreen,
     findPageComp,
     markAll,
