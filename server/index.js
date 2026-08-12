@@ -21,7 +21,13 @@ const stripe = SECRET && SECRET.startsWith("sk_") ? (await import("stripe")).def
 function json(status, body) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    },
   });
 }
 
@@ -105,6 +111,10 @@ const server = Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
     const path = url.pathname;
+
+    if (req.method === "OPTIONS") {
+      return json(204, {});
+    }
 
     if (req.method === "POST" && path === "/api/license/activate") {
       const body = await readJson(req);

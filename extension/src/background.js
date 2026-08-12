@@ -138,4 +138,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-console.log("[QuickSet] license worker ready");
+console.log("[QuickSet] license worker v2 ready (version " + chrome.runtime.getManifest().version + ")");
