@@ -187,6 +187,43 @@ function computeLevelStats() {
 }
 
 /**
+ * Day gaps between consecutive assignments. Uses the API records
+ * (curStudentStudyInfo.StudyUnitInfoList — same source as the aggregate
+ * chip), sorted by StudyDate; each gap = days between one set being given
+ * and the next. Returns { avg, med, n } or null (fewer than 2 dated
+ * records).
+ */
+function computeGapStats() {
+  try {
+    const comp = QS.blocks && QS.blocks.findPageComp ? QS.blocks.findPageComp() : null;
+    const list =
+      comp && comp.curStudentStudyInfo && Array.isArray(comp.curStudentStudyInfo.StudyUnitInfoList)
+        ? comp.curStudentStudyInfo.StudyUnitInfoList
+        : null;
+    if (!list) return null;
+    const times = [];
+    for (const r of list) {
+      const d = r && r.StudyDate ? String(r.StudyDate).trim() : "";
+      if (!d) continue;
+      const t = Date.parse(d);
+      if (Number.isFinite(t)) times.push(t);
+    }
+    times.sort((a, b) => a - b);
+    if (times.length < 2) return null;
+    const DAY = 86400000;
+    const gaps = [];
+    for (let i = 1; i < times.length; i++) gaps.push(Math.round((times[i] - times[i - 1]) / DAY));
+    gaps.sort((a, b) => a - b);
+    const mid = Math.floor(gaps.length / 2);
+    const med = gaps.length % 2 === 1 ? gaps[mid] : (gaps[mid - 1] + gaps[mid]) / 2;
+    const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    return { avg, med, n: gaps.length };
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
  * Level-stats chip, connected to the aggregate row: renders right of the
  * #qs-aggregate chip (same band, same height, same visual language). The
  * anchor falls back to the "Default" view button when the aggregate chip is
@@ -195,6 +232,7 @@ function computeLevelStats() {
 function refreshLevelStats() {
   try {
     const s = computeLevelStats();
+    const g = computeGapStats();
     let chip = document.getElementById("qs-level-stats");
     const anchor = document.getElementById("qs-aggregate") || document.querySelector(".progress-model-select-selected-view");
     if (!s || !anchor) {
@@ -205,7 +243,7 @@ function refreshLevelStats() {
       chip = document.createElement("div");
       chip.id = "qs-level-stats";
       chip.style.cssText =
-        "position:fixed;z-index:99990;display:grid;grid-template-columns:repeat(2,auto);column-gap:14px;align-items:center;justify-items:center;align-content:center;box-sizing:border-box;height:32px;padding:0 12px;background:#fff;border:1px solid #d9e2e6;border-radius:6px;font-size:12px;color:#1c3a5e;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.08);pointer-events:none;";
+        "position:fixed;z-index:99990;display:grid;grid-template-columns:repeat(4,auto);column-gap:14px;align-items:center;justify-items:center;align-content:center;box-sizing:border-box;height:32px;padding:0 12px;background:#fff;border:1px solid #d9e2e6;border-radius:6px;font-size:12px;color:#1c3a5e;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.08);pointer-events:none;";
       document.body.appendChild(chip);
     }
     chip.textContent = "";
@@ -221,9 +259,14 @@ function refreshLevelStats() {
     };
     chip.appendChild(cell("lvl pages", true));
     chip.appendChild(cell("repeat avg", true));
+    chip.appendChild(cell("gap avg", true));
+    chip.appendChild(cell("gap med", true));
     chip.appendChild(cell(String(s.pages), false));
     chip.appendChild(cell(s.avgRepeat.toFixed(2), false));
-    chip.title = `${s.assignments} assignments / ${s.sets} sets on this level — ${s.pages} pages done, ${s.avgRepeat.toFixed(2)} avg repeat`;
+    chip.appendChild(cell(g ? g.avg.toFixed(1) : "—", false));
+    chip.appendChild(cell(g ? g.med.toFixed(1) : "—", false));
+    chip.title = `${s.assignments} assignments / ${s.sets} sets on this level — ${s.pages} pages done, ${s.avgRepeat.toFixed(2)} avg repeat` +
+      (g ? `, ${g.avg.toFixed(1)}d avg / ${g.med.toFixed(1)}d med between sets (${g.n} gaps)` : "");
     const a = document.getElementById("qs-aggregate") || document.querySelector(".progress-model-select-selected-view");
     if (!a) return;
     const ar = a.getBoundingClientRect();
