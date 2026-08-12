@@ -186,28 +186,56 @@ function computeLevelStats() {
   return { pages, assignments: valid, sets: ranges.size, avgRepeat: valid / ranges.size };
 }
 
-/** The floating stats pill, anchored to the top-right of the editor panel. */
+/**
+ * Level-stats chip, connected to the aggregate row: renders right of the
+ * #qs-aggregate chip (same band, same height, same visual language). The
+ * anchor falls back to the "Default" view button when the aggregate chip is
+ * hidden (e.g. no studied sessions yet). Never throws.
+ */
 function refreshLevelStats() {
   try {
-    const el = document.querySelector("study-unit-editor");
-    let pill = document.getElementById("qs-level-stats");
-    const s = el ? computeLevelStats() : null;
-    if (!s) {
-      if (pill) pill.remove();
+    const s = computeLevelStats();
+    let chip = document.getElementById("qs-level-stats");
+    const anchor = document.getElementById("qs-aggregate") || document.querySelector(".progress-model-select-selected-view");
+    if (!s || !anchor) {
+      if (chip) chip.remove();
       return;
     }
-    if (!pill) {
-      pill = document.createElement("div");
-      pill.id = "qs-level-stats";
-      pill.style.cssText =
-        "position:fixed;z-index:99990;background:rgba(255,255,255,.94);border:1px solid #2a6df4;border-radius:14px;padding:4px 10px;font-size:12px;color:#333;box-shadow:0 2px 8px rgba(0,0,0,.2);pointer-events:none;white-space:nowrap;";
-      document.body.appendChild(pill);
+    if (!chip) {
+      chip = document.createElement("div");
+      chip.id = "qs-level-stats";
+      chip.style.cssText =
+        "position:fixed;z-index:99990;display:grid;grid-template-columns:repeat(2,auto);column-gap:14px;align-items:center;justify-items:center;align-content:center;box-sizing:border-box;height:32px;padding:0 12px;background:#fff;border:1px solid #d9e2e6;border-radius:6px;font-size:12px;color:#1c3a5e;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.08);pointer-events:none;";
+      document.body.appendChild(chip);
     }
-    const r = el.getBoundingClientRect();
-    pill.style.top = `${Math.max(8, Math.round(r.top) + 8)}px`;
-    pill.style.right = "12px";
-    const text = `📄 ${s.pages} pages done · 🔁 ${s.avgRepeat.toFixed(2)} avg repeat · ${s.assignments} given / ${s.sets} sets`;
-    if (pill.textContent !== text) pill.textContent = text;
+    chip.textContent = "";
+    const cell = (text, isHeader) => {
+      const sp = document.createElement("span");
+      sp.textContent = text;
+      if (isHeader) {
+        sp.style.cssText = "font-size:9px;line-height:1;color:#8aa5b0;text-transform:uppercase;letter-spacing:.4px;";
+      } else {
+        sp.style.cssText = "line-height:1.2;";
+      }
+      return sp;
+    };
+    chip.appendChild(cell("lvl pages", true));
+    chip.appendChild(cell("repeat avg", true));
+    chip.appendChild(cell(String(s.pages), false));
+    chip.appendChild(cell(s.avgRepeat.toFixed(2), false));
+    chip.title = `${s.assignments} assignments / ${s.sets} sets on this level — ${s.pages} pages done, ${s.avgRepeat.toFixed(2)} avg repeat`;
+    const a = document.getElementById("qs-aggregate") || document.querySelector(".progress-model-select-selected-view");
+    if (!a) return;
+    const ar = a.getBoundingClientRect();
+    chip.style.left = `${Math.round(ar.right + 8)}px`;
+    const bar = document.querySelector(".menu-bar");
+    if (bar) {
+      const b = bar.getBoundingClientRect();
+      const h = chip.offsetHeight || 32;
+      chip.style.top = `${Math.round(b.top + (b.height - h) / 2)}px`;
+    } else {
+      chip.style.top = `${Math.round(ar.top)}px`;
+    }
   } catch (e) {
     /* never throw */
   }
