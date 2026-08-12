@@ -6,8 +6,9 @@
 // Results are cached; the MAIN world derives the final state (active /
 // grace / invalid / unreachable / unlicensed).
 //
-// ── EDIT ME ── the public URL of your deployed license server
-const API_BASE = "https://YOUR-LICENSE-SERVER.example.com";
+// ── EDIT ME ── the public URL of your deployed license server.
+// (Currently pointed at the LOCAL dev server — swap when deploying.)
+const API_BASE = "http://localhost:8787";
 // ────────────────────────────────────────────────────────────
 const LS_VALIDATE = `${API_BASE}/api/license/validate`;
 const LS_ACTIVATE = `${API_BASE}/api/license/activate`;
