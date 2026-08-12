@@ -222,6 +222,26 @@ QS.license = (function () {
       gate.appendChild(portal);
       gate.appendChild(stateLine);
       document.body.appendChild(gate);
+      // self-healing: while the gate is visible, watch for the license
+      // becoming active (activated in another tab, network blip, key
+      // entered elsewhere) and unlock without a click
+      const watcher = setInterval(async () => {
+        try {
+          if (!document.getElementById("qs-license-gate")) {
+            clearInterval(watcher);
+            return;
+          }
+          const st = await getStatus(true);
+          if (isActive(st)) {
+            clearInterval(watcher);
+            gate.remove();
+            if (typeof window.__qsLicenseActivated === "function") window.__qsLicenseActivated();
+          }
+        } catch (e) {
+          /* keep watching */
+        }
+      }, 2000);
+      gate.__qsWatcher = watcher;
       return gate;
     } catch (e) {
       return null;
@@ -231,7 +251,10 @@ QS.license = (function () {
   function hideGate() {
     try {
       const gate = document.getElementById("qs-license-gate");
-      if (gate) gate.remove();
+      if (gate) {
+        if (gate.__qsWatcher) clearInterval(gate.__qsWatcher);
+        gate.remove();
+      }
     } catch (e) {
       /* never throw */
     }
