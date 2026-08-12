@@ -229,6 +229,21 @@ const server = Bun.serve({
       return new Response(ADMIN_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
+    if (req.method === "GET" && path === "/download") {
+      const file = process.env.DOWNLOAD_FILE || "../quick-mark-pro-0.2.0.zip";
+      try {
+        const data = await Bun.file(file).arrayBuffer();
+        return new Response(data, {
+          headers: {
+            "Content-Type": "application/zip",
+            "Content-Disposition": `attachment; filename="quick-mark-pro-0.2.0.zip"`,
+          },
+        });
+      } catch (e) {
+        return json(404, { error: "extension zip not found" });
+      }
+    }
+
     if (req.method === "GET" && path === "/health") {
       return json(200, { ok: true });
     }
