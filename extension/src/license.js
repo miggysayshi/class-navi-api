@@ -7,10 +7,12 @@
 var QS = globalThis.QS || (globalThis.QS = {});
 
 QS.license = (function () {
-  // ── EDIT ME after creating the LemonSqueezy product ──────────────
-  const CHECKOUT_URL =
-    "https://QUICKMARK.lemonsqueezy.com/checkout/buy/REPLACE_WITH_PRODUCT_ID";
-  const PORTAL_URL = "https://QUICKMARK.lemonsqueezy.com/billing";
+  // ── EDIT ME ──────────────────────────────────────────────
+  // Stripe: create a Payment Link for the $10/mo price (Dashboard → Payment
+  // links) and enable the Customer portal (Dashboard → Billing → Customer
+  // portal → activate; the portal link appears there).
+  const CHECKOUT_URL = "https://buy.stripe.com/REPLACE_WITH_PAYMENT_LINK_ID";
+  const PORTAL_URL = "https://billing.stripe.com/p/login/REPLACE_WITH_PORTAL_ID";
   const PRICE_LABEL = "$10/seat/month";
   // ──────────────────────────────────────────────────────────────────
   const GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7-day offline grace

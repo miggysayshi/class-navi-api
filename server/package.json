@@ -1,0 +1,14 @@
+{
+  "name": "quick-mark-license-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch index.js",
+    "start": "bun index.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "stripe": "^17.0.0"
+  }
+}

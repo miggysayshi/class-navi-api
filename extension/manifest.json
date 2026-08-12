@@ -4,7 +4,10 @@
   "version": "0.2.0",
   "description": "More assignment patterns (4-3-3, 3-2-3-2, ...), marking toolbar, and level stats in Class-Navi.",
   "permissions": ["storage"],
-  "host_permissions": ["https://class-navi.digital.kumon.com/*", "https://api.lemonsqueezy.com/*"],
+  "host_permissions": [
+    "https://class-navi.digital.kumon.com/*",
+    "https://YOUR-LICENSE-SERVER.example.com/*"
+  ],
   "background": { "service_worker": "src/background.js" },
   "content_scripts": [
     {

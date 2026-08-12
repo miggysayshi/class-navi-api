@@ -1,11 +1,16 @@
 // src/background.js — MV3 service worker: Quick Mark Pro license validation.
 // The MAIN world content scripts have no chrome.* access, so the ISOLATED
 // world bridge (src/content.js) relays requests here via
-// chrome.runtime.sendMessage. Fetches LemonSqueezy's license API (no CORS
-// from the extension context). Results are cached; the MAIN world derives
-// the final state (active / grace / invalid / unreachable / unlicensed).
-const LS_VALIDATE = "https://api.lemonsqueezy.com/v1/licenses/validate";
-const LS_ACTIVATE = "https://api.lemonsqueezy.com/v1/licenses/activate";
+// chrome.runtime.sendMessage. Validates against OUR license server (see
+// server/ in this repo — it issues keys and listens for Stripe webhooks).
+// Results are cached; the MAIN world derives the final state (active /
+// grace / invalid / unreachable / unlicensed).
+//
+// ── EDIT ME ── the public URL of your deployed license server
+const API_BASE = "https://YOUR-LICENSE-SERVER.example.com";
+// ────────────────────────────────────────────────────────────
+const LS_VALIDATE = `${API_BASE}/api/license/validate`;
+const LS_ACTIVATE = `${API_BASE}/api/license/activate`;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // re-validate online at most once/day
 const GRACE_MS = 7 * 24 * 60 * 60 * 1000; // offline grace (mirrors license.js)
 
@@ -58,7 +63,7 @@ async function status() {
       const cache = {
         valid,
         checkedAt: now,
-        expiresAt: j && j.license_key ? j.license_key.expires_at : null,
+        expiresAt: j && j.expiresAt ? j.expiresAt : null,
         error: j && j.error ? String(j.error) : null,
       };
       await chrome.storage.local.set({ qsCache: cache });
@@ -89,9 +94,9 @@ async function setKey(key) {
       if (j && j.activated === true) {
         await chrome.storage.local.set({
           qsKey: clean,
-          qsCache: { valid: true, checkedAt: Date.now(), expiresAt: j.license_key ? j.license_key.expires_at : null },
+          qsCache: { valid: true, checkedAt: Date.now(), expiresAt: j.expiresAt || null },
         });
-        return { ok: true, activated: true, expiresAt: j.license_key ? j.license_key.expires_at : null };
+        return { ok: true, activated: true, expiresAt: j.expiresAt || null };
       }
       return { ok: false, message: (j && j.error) || "activation rejected", detail: j };
     } catch (e) {
