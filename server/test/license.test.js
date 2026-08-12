@@ -1,6 +1,6 @@
 // server/test/license.test.js — pure license-DB logic (bun:sqlite, :memory:)
 import { test, expect, beforeAll } from "bun:test";
-import { openDb, generateKey, upsertLicense, setSubscriptionStatus, activateInstance, licensesForEmail } from "../db.js";
+import { openDb, generateKey, upsertLicense, setSubscriptionStatus, activateInstance, licensesForEmail, issueKeys } from "../db.js";
 
 let db;
 
@@ -69,4 +69,18 @@ test("licensesForEmail returns the customer's keys", () => {
   expect(keys.length).toBe(1);
   expect(keys[0].key).toBe(key);
   expect(keys[0].status).toBe("active");
+});
+
+test("issueKeys mints N unique active keys (admin path)", () => {
+  const keys = issueKeys(db, "Admin@Example.com", 3);
+  expect(keys.length).toBe(3);
+  expect(new Set(keys).size).toBe(3);
+  for (const k of keys) {
+    expect(/^QMP-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(k)).toBe(true);
+    // usable immediately
+    expect(activateInstance(db, k, "inst-admin-1", 3).valid).toBe(true);
+  }
+  // normalized email → findable via the portal lookup
+  const found = licensesForEmail(db, "admin@example.com");
+  expect(found.length).toBe(3);
 });

@@ -98,3 +98,23 @@ export function licensesForEmail(db, email) {
   if (!clean) return [];
   return db.query(`SELECT key, status, expires_at FROM licenses WHERE email = ? ORDER BY created_at`).all(clean);
 }
+
+/** Mint N fresh active license keys for an email (admin path). */
+export function issueKeys(db, email, count) {
+  const clean = String(email || "").toLowerCase().trim();
+  const n = Math.max(1, Number(count) || 1);
+  const stamp = Date.now();
+  const keys = [];
+  for (let i = 0; i < n; i++) {
+    const key = generateKey();
+    upsertLicense(db, {
+      key,
+      email: clean,
+      customerId: "admin",
+      subscriptionId: `admin-${stamp}-${i}`,
+      status: "active",
+    });
+    keys.push(key);
+  }
+  return keys;
+}

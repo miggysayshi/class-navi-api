@@ -1,12 +1,12 @@
-// server/scripts/issue-key.js — manually issue license key(s).
-// Use for: testing, free comps, manual seats, or when the webhook path
-// isn't involved. Each key is a full active license (3-device cap).
+// server/scripts/issue-key.js — manually issue license key(s) (local CLI).
+// Use for: testing, free comps, manual seats — or use the /admin page on
+// the deployed server (same minting logic, works without shell access).
 //
 // Usage:
 //   bun run scripts/issue-key.js --email demo@quickmark.test          # 1 key
 //   bun run scripts/issue-key.js --email demo@quickmark.test --count 5
 //   bun run scripts/issue-key.js --email x@y.z --db /tmp/license.db
-import { openDb, generateKey, upsertLicense } from "../db.js";
+import { openDb, issueKeys } from "../db.js";
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -23,15 +23,6 @@ if (!email) {
 }
 
 const db = openDb(dbPath);
-for (let i = 0; i < count; i++) {
-  const key = generateKey();
-  upsertLicense(db, {
-    key,
-    email,
-    customerId: "manual",
-    subscriptionId: `manual-${Date.now()}-${i}`,
-    status: "active",
-  });
-  console.log(key);
-}
-console.log(`issued ${count} key(s) for ${email} → ${dbPath}`);
+const keys = issueKeys(db, email, count);
+for (const key of keys) console.log(key);
+console.log(`issued ${keys.length} key(s) for ${email} → ${dbPath}`);
