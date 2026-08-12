@@ -3,9 +3,28 @@
 var QS = globalThis.QS || (globalThis.QS = {});
 console.log("[QuickSet] bridge ready (ISOLATED world)");
 
+/**
+ * Send a message to the background worker using the CALLBACK form —
+ * the promise form of chrome.runtime.sendMessage can silently resolve
+ * undefined in MV3 when the worker responds asynchronously (Edge quirk).
+ * Always resolves; surfaces chrome.runtime.lastError when present.
+ */
+function sendToWorker(workerType, payload) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: workerType, payload }, (response) => {
+      const err = chrome.runtime.lastError;
+      if (err && err.message) {
+        resolve({ error: err.message });
+        return;
+      }
+      resolve(response || {});
+    });
+  });
+}
+
 async function relayToWorker(event, workerType, outType) {
   try {
-    const result = await chrome.runtime.sendMessage({ type: workerType, payload: event.data.payload });
+    const result = await sendToWorker(workerType, event.data.payload);
     window.postMessage({ type: outType, requestId: event.data.requestId, result: result || {} }, "*");
   } catch (err) {
     window.postMessage(

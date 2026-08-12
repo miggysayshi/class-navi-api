@@ -118,16 +118,22 @@ async function setDebug(value) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
-  if (msg.type === "qs-license-status") {
-    status().then(sendResponse);
-    return true; // async response
-  }
-  if (msg.type === "qs-license-set-key") {
-    setKey(msg.payload && msg.payload.key).then(sendResponse);
-    return true;
-  }
-  if (msg.type === "qs-license-set-debug") {
-    setDebug(msg.payload && msg.payload.value).then(sendResponse);
+  try {
+    if (msg.type === "qs-license-status") {
+      status().then(sendResponse);
+      return true; // async response
+    }
+    if (msg.type === "qs-license-set-key") {
+      setKey(msg.payload && msg.payload.key).then(sendResponse);
+      return true;
+    }
+    if (msg.type === "qs-license-set-debug") {
+      setDebug(msg.payload && msg.payload.value).then(sendResponse);
+      return true;
+    }
+  } catch (e) {
+    // never leave the caller hanging — surface the failure
+    sendResponse({ error: String(e && e.message ? e.message : e) });
     return true;
   }
 });
