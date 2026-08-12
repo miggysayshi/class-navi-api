@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Class-Navi Quick Set",
-  "version": "0.1.0",
-  "description": "More assignment patterns (4-3-3, 3-2-3-2, ...) in the Class-Navi worksheets-per-study dropdown.",
+  "version": "0.2.0",
+  "description": "More assignment patterns (4-3-3, 3-2-3-2, ...), marking toolbar, and level stats in Class-Navi.",
   "permissions": ["storage"],
-  "host_permissions": ["https://class-navi.digital.kumon.com/*"],
+  "host_permissions": ["https://class-navi.digital.kumon.com/*", "https://api.lemonsqueezy.com/*"],
+  "background": { "service_worker": "src/background.js" },
   "content_scripts": [
     {
       "matches": ["https://class-navi.digital.kumon.com/*"],
@@ -12,6 +13,7 @@
         "src/patterns.js",
         "src/lib.js",
         "src/angular-hooks.js",
+        "src/license.js",
         "src/day-blocks.js",
         "src/dropdown.js",
         "src/aggregate.js",

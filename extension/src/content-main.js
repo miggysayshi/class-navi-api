@@ -74,18 +74,39 @@ async function boot() {
 // element, debounced; never a one-shot flag
 let debounce = null;
 let markingToolbarInjected = false;
+
+/** Boot every feature (patterns dropdown, marking toolbar, aggregates). */
+function runBoots() {
+  const panel = document.querySelector(".options.setting-options");
+  if (panel && panel !== currentPanel) {
+    currentPanel = panel;
+    boot();
+  }
+  bootMarking();
+  // editor header aggregates (avg pages/time per study session) — its own
+  // student/level key makes repeated calls cheap
+  if (QS.aggregate) QS.aggregate.updateDisplay();
+}
+
+// called by the license gate's Activate button when a key is accepted
+window.__qsLicenseActivated = () => {
+  window.__qsLicensed = true;
+  runBoots();
+  refreshLevelStats();
+};
+
 const mo = new MutationObserver(() => {
   clearTimeout(debounce);
-  debounce = setTimeout(() => {
-    const panel = document.querySelector(".options.setting-options");
-    if (panel && panel !== currentPanel) {
-      currentPanel = panel;
-      boot();
+  debounce = setTimeout(async () => {
+    // license gate: features only run for active / offline-grace licenses
+    const lic = await QS.license.getStatus();
+    window.__qsLicensed = QS.license.isActive(lic);
+    if (window.__qsLicensed) {
+      QS.license.hideGate();
+      runBoots();
+    } else {
+      QS.license.showGate(lic);
     }
-    bootMarking();
-    // editor header aggregates (avg pages/time per study session) — its own
-    // student/level key makes repeated calls cheap
-    if (QS.aggregate) QS.aggregate.updateDisplay();
   }, 250);
 });
 mo.observe(document.documentElement, { childList: true, subtree: true });
@@ -231,6 +252,11 @@ function computeGapStats() {
  */
 function refreshLevelStats() {
   try {
+    if (!window.__qsLicensed) {
+      const gone = document.getElementById("qs-level-stats");
+      if (gone) gone.remove();
+      return;
+    }
     const s = computeLevelStats();
     const g = computeGapStats();
     let chip = document.getElementById("qs-level-stats");

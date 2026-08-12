@@ -1,0 +1,67 @@
+// test/license.test.js — pure license-status logic (Quick Mark Pro)
+import { test, expect } from "bun:test";
+await import("../src/license.js");
+const { deriveState, graceDays, fmtDate, GRACE_MS } = globalThis.QS.license;
+
+const NOW = Date.UTC(2026, 6, 1, 12, 0, 0); // 2026-07-01 12:00 UTC
+
+test("deriveState: no key → unlicensed", () => {
+  const s = deriveState({ key: false, instance: "i1", validation: null, cache: null, error: null }, NOW);
+  expect(s.state).toBe("unlicensed");
+  expect(s.reason).toBe("no-key");
+});
+
+test("deriveState: valid validation → active with expiry", () => {
+  const s = deriveState(
+    { key: true, validation: { valid: true, expiresAt: "2026-08-01T00:00:00Z", checkedAt: NOW } },
+    NOW
+  );
+  expect(s.state).toBe("active");
+  expect(s.expiresAt).toBe("2026-08-01T00:00:00Z");
+});
+
+test("deriveState: rejected key → invalid", () => {
+  const s = deriveState({ key: true, validation: { valid: false, error: "invalid license key" } }, NOW);
+  expect(s.state).toBe("invalid");
+  expect(s.message).toContain("invalid");
+});
+
+test("deriveState: debug override wins (on → active, off → unlicensed)", () => {
+  expect(deriveState({ key: false, debug: "on" }, NOW).state).toBe("active");
+  expect(deriveState({ key: true, debug: "off" }, NOW).state).toBe("unlicensed");
+});
+
+test("deriveState: recent valid cache + no validation → offline grace", () => {
+  const s = deriveState(
+    { key: true, validation: null, cache: { valid: true, checkedAt: NOW - 24 * 3600 * 1000 }, error: "fetch failed" },
+    NOW
+  );
+  expect(s.state).toBe("grace");
+  expect(s.remainingMs).toBeGreaterThan(0);
+  expect(s.remainingMs).toBeLessThan(GRACE_MS);
+});
+
+test("deriveState: stale cache + network error → unreachable", () => {
+  const s = deriveState(
+    { key: true, validation: null, cache: { valid: true, checkedAt: NOW - 10 * 24 * 3600 * 1000 }, error: "fetch failed" },
+    NOW
+  );
+  expect(s.state).toBe("unreachable");
+});
+
+test("deriveState: stale cache, no error → unlicensed (no-validation)", () => {
+  const s = deriveState({ key: true, validation: null, cache: { valid: true, checkedAt: NOW - 10 * 24 * 3600 * 1000 } }, NOW);
+  expect(s.state).toBe("unlicensed");
+});
+
+test("graceDays rounds up and floors at 0", () => {
+  expect(graceDays({ remainingMs: 6 * 24 * 3600 * 1000 + 1 })).toBe(7);
+  expect(graceDays({ remainingMs: 0 })).toBe(0);
+  expect(graceDays(null)).toBe(0);
+});
+
+test("fmtDate formats ISO and handles garbage", () => {
+  expect(fmtDate("2026-09-01T00:00:00Z")).toBe("Sep 1, 2026");
+  expect(fmtDate(null)).toBe("");
+  expect(fmtDate("nope")).toBe("");
+});
