@@ -80,6 +80,7 @@ QS.license = (function () {
         return;
       }
       const id = `qs-${++reqSeq}-${Date.now()}`;
+      console.log(`[QuickSet] license request ${id} (${type})`);
       const timer = setTimeout(() => {
         delete pending[id];
         resolve({ error: "bridge-timeout" });
@@ -96,6 +97,7 @@ QS.license = (function () {
       const p = pending[data.requestId];
       delete pending[data.requestId];
       clearTimeout(p.timer);
+      console.log(`[QuickSet] license response for ${data.requestId}:`, JSON.stringify(data.result || {}).slice(0, 200));
       p.resolve(data.result || { error: "empty" });
     });
   }
@@ -123,6 +125,7 @@ QS.license = (function () {
       return cachedStatus.status;
     }
     const raw = await fetchStatus();
+    console.log("[QuickSet] license raw payload:", JSON.stringify(raw).slice(0, 400));
     const status = deriveState(raw, Date.now());
     status.instance = raw && raw.instance;
     cachedStatus = { at: Date.now(), status };
