@@ -11,7 +11,7 @@ QS.license = (function () {
   // Stripe: create a Payment Link for the $10/mo price (Dashboard → Payment
   // links) and enable the Customer portal (Dashboard → Billing → Customer
   // portal → activate; the portal link appears there).
-  const CHECKOUT_URL = "https://buy.stripe.com/REPLACE_WITH_PAYMENT_LINK_ID";
+  const CHECKOUT_URL = "https://buy.stripe.com/test_14A8wP4Kpfr57ZIgDY8k800"; // TEST link — swap for the live one at launch
   const PORTAL_URL = "https://billing.stripe.com/p/login/REPLACE_WITH_PORTAL_ID";
   const PRICE_LABEL = "$10/seat/month";
   // ──────────────────────────────────────────────────────────────────
