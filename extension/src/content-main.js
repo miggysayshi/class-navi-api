@@ -36,6 +36,9 @@ async function boot() {
   try {
     const patterns = await getPatternsWithRetry();
     if (!patterns) return;
+    // remove options we no longer offer ("5 worksheets per study") first, so
+    // the injected uniform options can't collide with them
+    QS.dropdown.pruneUniformOptions();
     const injected = QS.dropdown.injectUniformOptions(patterns);
     if (!injected && !QS.angular.findMinWorksheetCountList()) {
       console.warn("[QuickSet] Angular component not found — injection disabled on this screen.");
@@ -80,9 +83,27 @@ const mo = new MutationObserver(() => {
       boot();
     }
     bootMarking();
+    // editor header aggregates (avg pages/time per study session) — its own
+    // student/level key makes repeated calls cheap
+    if (QS.aggregate) QS.aggregate.updateDisplay();
   }, 250);
 });
 mo.observe(document.documentElement, { childList: true, subtree: true });
+
+// keep the aggregate chip anchored to the "Default" button if the header
+// re-renders (level switches, view menu open/close)
+if (!window.__qsAggregatePinger) {
+  window.__qsAggregatePinger = setInterval(() => {
+    const chip = document.getElementById("qs-aggregate");
+    if (chip && QS.aggregate) QS.aggregate.positionChip(chip);
+  }, 1000);
+}
+
+// level stats pill (assign homework screen): refresh in the background
+if (!window.__qsStatsPinger) {
+  window.__qsStatsPinger = setInterval(refreshLevelStats, 1500);
+  refreshLevelStats();
+}
 
 // ---------- Quick Mark: toolbar placement ----------
 
@@ -116,6 +137,77 @@ function positionQuickMarkToolbar() {
     wrap.style.top = `${Math.max(4, bottom - tRect.top + 6)}px`;
     wrap.style.marginTop = "0";
     wrap.style.zIndex = "99990";
+  } catch (e) {
+    /* never throw */
+  }
+}
+
+// ---------- Quick Mark: level stats (assign homework screen) ----------
+
+/** Find the studyUnits array inside the study-unit-editor's Angular state. */
+function findStudyUnits() {
+  try {
+    const el = document.querySelector("study-unit-editor");
+    if (!el || !el.__ngContext__) return null;
+    const ctx = Array.isArray(el.__ngContext__) ? el.__ngContext__ : null;
+    if (!ctx) return null;
+    for (let i = 0; i < ctx.length; i++) {
+      const v = ctx[i];
+      if (v && typeof v === "object" && Array.isArray(v.studyUnits)) return v.studyUnits;
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Level stats from the homework history. Each studyUnits row = one time a
+ * set was given, with its page range (WorksheetNOFrom → WorksheetNOTo).
+ * - pages done = Σ over rows of the set length (each given set counts its
+ *   pages — "how many times the last page was given")
+ * - avg repeat = assignments ÷ distinct sets
+ */
+function computeLevelStats() {
+  const rows = findStudyUnits();
+  if (!rows || rows.length === 0) return null;
+  const ranges = new Set();
+  let pages = 0;
+  let valid = 0;
+  for (const r of rows) {
+    const from = Number(r && r.WorksheetNOFrom);
+    const to = Number(r && r.WorksheetNOTo);
+    if (!from || !to || to < from) continue;
+    ranges.add(`${from}-${to}`);
+    pages += to - from + 1;
+    valid++;
+  }
+  if (valid === 0 || ranges.size === 0) return null;
+  return { pages, assignments: valid, sets: ranges.size, avgRepeat: valid / ranges.size };
+}
+
+/** The floating stats pill, anchored to the top-right of the editor panel. */
+function refreshLevelStats() {
+  try {
+    const el = document.querySelector("study-unit-editor");
+    let pill = document.getElementById("qs-level-stats");
+    const s = el ? computeLevelStats() : null;
+    if (!s) {
+      if (pill) pill.remove();
+      return;
+    }
+    if (!pill) {
+      pill = document.createElement("div");
+      pill.id = "qs-level-stats";
+      pill.style.cssText =
+        "position:fixed;z-index:99990;background:rgba(255,255,255,.94);border:1px solid #2a6df4;border-radius:14px;padding:4px 10px;font-size:12px;color:#333;box-shadow:0 2px 8px rgba(0,0,0,.2);pointer-events:none;white-space:nowrap;";
+      document.body.appendChild(pill);
+    }
+    const r = el.getBoundingClientRect();
+    pill.style.top = `${Math.max(8, Math.round(r.top) + 8)}px`;
+    pill.style.right = "12px";
+    const text = `📄 ${s.pages} pages done · 🔁 ${s.avgRepeat.toFixed(2)} avg repeat · ${s.assignments} given / ${s.sets} sets`;
+    if (pill.textContent !== text) pill.textContent = text;
   } catch (e) {
     /* never throw */
   }

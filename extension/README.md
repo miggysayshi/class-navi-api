@@ -9,16 +9,22 @@ worksheet blocks — no extra panels, no new UI surfaces.
 ## What it does
 
 - **Uniform options**: adds `4`, `3`, `2 worksheets per study` to the dropdown
-  (native values 10 and 5 stay first).
-- **Page patterns**: a "`N` pages / day" section lists your patterns. Clicking
-  one (e.g. `4-3-3`) reshapes every day whose editable blocks are **full
-  10-page blocks** (10, 20, 30, …): a 10-block becomes the pattern once, a
-  20-block becomes it twice, and so on. Days that are **already split** (5-5,
-  4-3-3, 2-2-2-2-2, mixed) are **skipped — never re-flattened**. Unsaved
-  drag-created blocks count too (matching runs against your live view). A
-  progress bar in the dropdown shows each day being edited.
-- Patterns are editable on the extension's **options page** (10 and 5 are
-  read-only native values).
+  (the native 10 stays first; the native **5 option is removed entirely** —
+  10-page blocks are broken into session segments instead).
+- **Page patterns**: a "**Study pattern**" section lists your patterns.
+  Clicking one (e.g. `4-3-3`) reshapes every day whose editable blocks are
+  **full 10-page blocks** (10, 20, 30, …): a 10-block becomes the pattern
+  once, a 20-block becomes it twice, and so on. Days that are **already
+  split** (5-5, 4-3-3, 2-2-2-2-2, mixed) are **skipped — never
+  re-flattened**. Unsaved drag-created blocks count too (matching runs against
+  your live view). A progress bar in the dropdown shows each day being edited.
+- Patterns are editable on the extension's **options page** (10 is a read-only
+  native value).
+- **Study-session stats**: in the editor header, right of the "Default"
+  view button, a compact 2×4 table shows **avg + median pages and time per
+  study session** for the current student/level (studied sessions only —
+  from the app's `CompleteTime` field; hover for the session count).
+  Recomputes on level switch.
 
 ## Install (load unpacked)
 
@@ -36,12 +42,13 @@ every code change — content scripts inject on page load.
 | Pattern | Sum | Blocks per day |
 |---|---|---|
 | `10` | 10 | native |
-| `5` | 5 | native |
 | `4-3-3` | 10 | 4, 3, 3 |
 | `3-2-3-2` | 10 | 3, 2, 3, 2 |
 | `2-2-2-2-2` | 10 | 2, 2, 2, 2, 2 |
 | `5-5` | 10 | 5, 5 |
-| `3-2` | 5 | 3, 2 |
+
+(The old `5 worksheets per study` uniform option and the `3-2` study pattern
+were removed entirely — 2026-08-11.)
 
 Pattern syntax: numbers separated by `-` or `,` (e.g. `4-3-3`, `3,2`).
 

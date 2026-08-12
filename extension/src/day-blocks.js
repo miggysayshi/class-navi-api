@@ -308,5 +308,5 @@ QS.blocks = (function () {
     }
   }
 
-  return { findPageComp, applyPatternToMatchingDays };
+  return { findPageComp, fetchParams, applyPatternToMatchingDays };
 })();

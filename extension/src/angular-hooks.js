@@ -42,20 +42,33 @@ QS.angular = (function () {
   }
 
   /**
+   * Returns the APP-ATD0010P page comp backing the worksheets-per-study
+   * dropdown, or null. Same lookup as findMinWorksheetCountList but returns
+   * the whole component (for reading/writing minWorksheetUnitCount too).
+   * Never throws.
+   */
+  function findWorksheetCountComp(root) {
+    try {
+      const found = findComp(".option.setting-options", ["minWorksheetUnitCountList"], root);
+      return found ? found.comp : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Returns the minWorksheetUnitCountList array backing the worksheets-per-study
    * dropdown (verified: APP-ATD0010P page comp, depth 7), or null when the
    * editor screen is not present / anything fails. Never throws.
    */
   function findMinWorksheetCountList(root) {
     try {
-      const found = findComp(".option.setting-options", ["minWorksheetUnitCountList"], root);
-      if (!found) return null;
-      const list = found.comp.minWorksheetUnitCountList;
-      return Array.isArray(list) ? list : null;
+      const comp = findWorksheetCountComp(root);
+      return comp && Array.isArray(comp.minWorksheetUnitCountList) ? comp.minWorksheetUnitCountList : null;
     } catch (e) {
       return null;
     }
   }
 
-  return { scanLView, findComp, findMinWorksheetCountList };
+  return { scanLView, findComp, findWorksheetCountComp, findMinWorksheetCountList };
 })();
