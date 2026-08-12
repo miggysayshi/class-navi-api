@@ -94,3 +94,44 @@ test("showGate renders the activation card without throwing (regression: state w
   expect(gate.children.length).toBeGreaterThanOrEqual(6); // title, sub, msg, input, err, btn, buy, portal, stateLine
   delete globalThis.document;
 });
+
+test("bridge ignores its own request messages (self-match regression: every request ate its own response)", async () => {
+  // harness: a fake window whose postMessage feeds the module's own listener
+  let handler = null;
+  const inbox = [];
+  const fakeWindow = {
+    addEventListener: (type, fn) => {
+      if (type === "message") handler = fn;
+    },
+    postMessage: (msg) => {
+      inbox.push(msg);
+      // simulate same-window delivery: the listener sees its own messages
+      if (handler) handler({ data: msg });
+    },
+  };
+  globalThis.window = fakeWindow;
+  // re-evaluate the module with the fake window in place (fresh listener)
+  const fresh = await import(`../src/license.js?selfmatch=${Date.now()}`);
+  const lic = fresh && fresh.QS ? fresh.QS.license : globalThis.QS.license;
+  const p = lic.getStatus(true); // force → skips cache → bridge request
+  await new Promise((r) => setTimeout(r, 0));
+  // the REQUEST message was delivered to the module's own listener — with
+  // the type gate it must NOT resolve the pending entry
+  expect(inbox.length).toBe(1);
+  expect(inbox[0].type).toBe("qs:license-status-request");
+  let settled = false;
+  p.then(() => (settled = true));
+  await new Promise((r) => setTimeout(r, 10));
+  expect(settled).toBe(false); // NOT resolved by its own request
+  // now deliver the real response
+  handler({
+    data: {
+      type: "qs:license-status-response",
+      requestId: inbox[0].requestId,
+      result: { key: true, instance: "i1", validation: { valid: true, checkedAt: Date.now() } },
+    },
+  });
+  const status = await p;
+  expect(status.state).toBe("active");
+  delete globalThis.window;
+});

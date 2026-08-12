@@ -93,7 +93,19 @@ QS.license = (function () {
   if (typeof window !== "undefined") {
     window.addEventListener("message", (event) => {
       const data = event && event.data;
-      if (!data || typeof data !== "object" || !data.requestId || !pending[data.requestId]) return;
+      if (!data || typeof data !== "object") return;
+      // ONLY response types — window.postMessage delivers to the sender's
+      // own listeners too, and the request messages carry a requestId that
+      // would self-match the pending map and resolve with an empty result
+      // (the "empty" bug: every request ate its own response).
+      if (
+        data.type !== "qs:license-status-response" &&
+        data.type !== "qs:license-set-key-response" &&
+        data.type !== "qs:license-set-debug-response"
+      ) {
+        return;
+      }
+      if (!data.requestId || !pending[data.requestId]) return;
       const p = pending[data.requestId];
       delete pending[data.requestId];
       clearTimeout(p.timer);
