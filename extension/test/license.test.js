@@ -65,3 +65,32 @@ test("fmtDate formats ISO and handles garbage", () => {
   expect(fmtDate(null)).toBe("");
   expect(fmtDate("nope")).toBe("");
 });
+
+test("showGate renders the activation card without throwing (regression: state was undefined in showGate scope)", () => {
+  const makeEl = () => ({
+    style: {},
+    textContent: "",
+    disabled: false,
+    href: "",
+    children: [],
+    appendChild(c) {
+      this.children.push(c);
+      return c;
+    },
+    addEventListener() {},
+    remove() {
+      this.removed = true;
+    },
+  });
+  const body = makeEl();
+  globalThis.document = {
+    getElementById: () => null,
+    createElement: () => makeEl(),
+    body,
+  };
+  const { showGate } = globalThis.QS.license;
+  const gate = showGate({ state: "unlicensed" });
+  expect(gate).not.toBeNull();
+  expect(gate.children.length).toBeGreaterThanOrEqual(6); // title, sub, msg, input, err, btn, buy, portal, stateLine
+  delete globalThis.document;
+});

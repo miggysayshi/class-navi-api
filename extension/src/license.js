@@ -148,6 +148,7 @@ QS.license = (function () {
   function showGate(status) {
     try {
       if (typeof document === "undefined") return null;
+      const state = status && status.state;
       let gate = document.getElementById("qs-license-gate");
       if (gate) return gate;
       gate = document.createElement("div");
