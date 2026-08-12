@@ -230,7 +230,10 @@ const server = Bun.serve({
     }
 
     if (req.method === "GET" && path === "/download") {
-      const file = process.env.DOWNLOAD_FILE || "../quick-mark-pro-0.2.0.zip";
+      // script-relative default (import.meta.dir = server/) — env override
+      // for deployed layouts
+      const file =
+        process.env.DOWNLOAD_FILE || `${import.meta.dir}/../quick-mark-pro-0.2.0.zip`;
       try {
         const data = await Bun.file(file).arrayBuffer();
         return new Response(data, {
