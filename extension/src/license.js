@@ -194,14 +194,21 @@ QS.license = (function () {
       btn.addEventListener("click", async () => {
         btn.disabled = true;
         btn.textContent = "Checking…";
-        const res = await setKey(input.value.trim());
+        const keyText = input.value.trim();
+        // an empty input means "re-check what's already stored" — the card
+        // can be stale (e.g. the key was activated from the console)
+        const res = keyText ? await setKey(keyText) : { ok: true };
         const st = await getStatus(true);
         if (isActive(st)) {
           gate.remove();
           if (typeof window.__qsLicenseActivated === "function") window.__qsLicenseActivated();
           return;
         }
-        err.textContent = res && res.message ? String(res.message) : "Key not accepted yet — check it and retry.";
+        err.textContent = res && res.message
+          ? String(res.message)
+          : keyText
+            ? "Key not accepted yet — check it and retry."
+            : "No key stored yet — paste your license key above, then Activate.";
         btn.disabled = false;
         btn.textContent = "Activate";
       });
