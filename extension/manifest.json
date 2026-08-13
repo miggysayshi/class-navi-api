@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Class-Navi Quick Set",
-  "version": "0.2.0",
-  "description": "More assignment patterns (4-3-3, 3-2-3-2, ...), marking toolbar, and level stats in Class-Navi.",
+  "name": "Class Navi Pro Tools",
+  "version": "1.0.0",
+  "short_description": "One-click study patterns, speed marking, typed red-ink comments, and study stats for Class-Navi.",
+  "description": "One-click study patterns (4-3-3, 3-2-3-2, ...), page marking, red-ink comments, and level stats inside Class-Navi.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://class-navi.digital.kumon.com/*",

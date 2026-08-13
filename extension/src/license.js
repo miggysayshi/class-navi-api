@@ -153,7 +153,7 @@ QS.license = (function () {
     let line = "";
     if (state === "invalid") line = `Your license key was rejected. Check it and try again.`;
     else if (state === "unreachable") line = `Could not reach the license server. If you just activated, wait a moment and reload.`;
-    else line = `Quick Mark Pro is a ${PRICE_LABEL} subscription. Activate below to use the marking toolbar, patterns, and level stats.`;
+    else line = `Class Navi Pro Tools is a ${PRICE_LABEL} subscription. Activate below to use the marking toolbar, patterns, and level stats.`;
     return line;
   }
 
@@ -171,7 +171,7 @@ QS.license = (function () {
       gate.style.cssText =
         "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:999999;background:#fff;border:1px solid #2a6df4;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.3);padding:24px 28px;width:380px;max-width:92vw;font-size:13px;color:#1c3a5e;text-align:center;font-family:-apple-system,'Segoe UI',Roboto,sans-serif;";
       const title = document.createElement("div");
-      title.textContent = "Quick Mark Pro";
+      title.textContent = "Class Navi Pro Tools";
       title.style.cssText = "font-size:18px;font-weight:700;margin-bottom:4px;";
       const sub = document.createElement("div");
       sub.textContent = "Unlock the Class-Navi grading toolkit";

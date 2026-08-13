@@ -1,10 +1,11 @@
-# Class-Navi Quick Tools — Product Description
+# Class Navi Pro Tools — Product Description
 
-> Status: draft (2026-08-11). Written from the extension README feature list.
+> Status: draft (2026-08-12). Final product name chosen by Miguel (2026-08-12).
+> Written from the extension README feature list.
 
 ## Product title
 
-**Class-Navi Quick Tools — study patterns, speed grading & student stats for Kumon instructors**
+**Class Navi Pro Tools — study patterns, speed grading & student stats for Kumon instructors**
 
 ## One-liner
 
@@ -14,7 +15,7 @@ study stats without counting by hand.
 
 ## Full description
 
-**Class-Navi Quick Tools makes daily assigning and marking dramatically faster —
+**Class Navi Pro Tools makes daily assigning and marking dramatically faster —
 entirely inside the Class-Navi screens you already use. No new windows, no extra
 dashboards, no learning curve.**
 
@@ -52,10 +53,15 @@ assignments** — the numbers you'd otherwise count by hand.
 
 ### Private by design
 
-Installs in minutes as a browser extension (Edge/Chrome), runs entirely inside
+Installs in minutes from the Chrome Web Store or Edge Add-ons, runs entirely inside
 the Class-Navi page, and uses **only your existing Class-Navi session** — no
-separate accounts, no data leaves your browser. All saves go through Class-Navi's
-own app, exactly as if you'd clicked Save yourself.
+separate Class-Navi account, all saves go through Class-Navi's own app, exactly
+as if you'd clicked Save yourself.
+
+**Subscription**: Pro features are unlocked with a paid subscription. Activation
+sends your license key and an anonymous install ID to the developer's license
+server to verify the subscription; billing is handled by Stripe. See the
+privacy policy for details.
 
 ---
 
@@ -71,11 +77,17 @@ own app, exactly as if you'd clicked Save yourself.
 - Level stats: pages assigned, average repeat rate, assignment gap avg/median
 - Works in the app's own UI — no new panels, no separate dashboards
 - Uses only the existing Class-Navi login session; saves via Class-Navi's own app
-- Install: Edge/Chrome, load-unpacked extension
+- Install: Chrome Web Store / Edge Add-ons (store submission in progress);
+  dev builds load-unpacked
 
 ## Notes / open questions
 
-- Name is a working title ("Quick Tools"); the extension folders use "Quick Set"
-  + "Quick Mark" internally. Confirm final product name before publishing.
-- Installation story for non-technical buyers (load-unpacked) may need packaging
-  or a short install guide before selling to other instructors.
+- **Name DECIDED 2026-08-12**: "Class Navi Pro Tools" (Miguel). The internal
+  license-server brand stays "Quick Mark Pro" (QMP- keys, Stripe payment
+  link) — store name and payment brand need not match, but consider
+  renaming the Stripe product/brand for consistency.
+- Trademark note: the name contains "Class-Navi" (Kumon's product) — both
+  stores may ask for justification; the description must stay clearly
+  "unofficial, not affiliated" language.
+- Installation story for non-technical buyers: store install once published;
+  until then, a short install guide for load-unpacked.

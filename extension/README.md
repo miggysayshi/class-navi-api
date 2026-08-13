@@ -1,4 +1,4 @@
-# Class-Navi Quick Set
+# Class Navi Pro Tools
 
 Adds **page-pattern options** (e.g. 4-3-3, 3-2-3-2) to Class-Navi's existing
 "worksheets per study" dropdown. One click reshapes every matching day's
