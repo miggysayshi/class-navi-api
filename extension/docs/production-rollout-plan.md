@@ -85,15 +85,15 @@ Follow `server/docs/mac-mini-hosting.md` step by step:
    seed a key in the DB, `POST /api/license/validate` → `{valid:true}`;
    `/portal` + `/admin` load.
 
-## Phase 2 — Privacy policy page (~30 min)
+## Phase 2 — Privacy policy page (~30 min) — **DONE 2026-08-14** (commit ab94868)
 
-1. Add `GET /privacy` to `server/index.js` (static HTML, follow the `/portal`
-   pattern): what is collected (email for key lookup/billing, license key,
-   anonymous install ID, subscription status), why, retention, no selling,
-   HTTPS-only, contact email, deletion path.
-2. Re-rsync + `launchctl kickstart` the service; curl the page.
-3. Both stores need this URL — put `https://license.<domain>/privacy` in
-   every submission form.
+✅ `GET /privacy` added to `server/index.js` (PRIVACY_HTML, same pattern as
+`/portal`), deployed via rsync + `launchctl kickstart`, verified 200 on
+prod. Covers: what the extension sends (license key + install ID → server;
+preferences → browser-local only), what the server stores, Stripe as payment
+processor, retention, no-sharing, HTTPS, deletion via
+support@nimira-timer.com. **Note**: contact email is a placeholder —
+confirm `support@nimira-timer.com` or swap before submission.
 
 ## Phase 3 — Stripe live (~30–60 min, Miguel's dashboard)
 
