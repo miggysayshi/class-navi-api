@@ -5,6 +5,7 @@
 //   POST /api/stripe/webhook                                   → Stripe events
 //   GET  /api/portal/keys?email=...                            → key lookup
 //   GET  /portal                                                → portal page
+//   GET  /privacy                                               → privacy policy
 // Environment: see .env.example.
 import { openDb, generateKey, upsertLicense, setSubscriptionStatus, activateInstance, licensesForEmail, issueKeys } from "./db.js";
 
@@ -159,6 +160,86 @@ const ADMIN_HTML = `<!doctype html>
   });
 </script></body></html>`;
 
+const PRIVACY_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Privacy Policy — Class Navi Pro Tools</title>
+<style>
+  body { font-family: -apple-system,'Segoe UI',Roboto,sans-serif; background:#f4f7f9; color:#1c3a5e; margin:0; padding:32px 16px; line-height:1.6; }
+  .card { background:#fff; border:1px solid #d9e2e6; border-radius:12px; padding:28px 32px; max-width:720px; margin:0 auto; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .meta { color:#5b738c; font-size:13px; margin-bottom:20px; }
+  h2 { font-size:16px; margin:28px 0 8px; }
+  p, li { font-size:14px; }
+  ul { padding-left:20px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin:12px 0; }
+  th, td { border:1px solid #d9e2e6; padding:8px 10px; text-align:left; }
+  th { background:#f0f5f8; }
+  a { color:#2a6df4; }
+</style></head><body><div class="card">
+<h1>Privacy Policy</h1>
+<div class="meta">Class Navi Pro Tools (the "extension") — last updated August 14, 2026</div>
+
+<p>This page explains what data the extension and its license service collect,
+why, and how it is handled. It is a plain-English summary in one page.</p>
+
+<h2>Short version</h2>
+<ul>
+  <li>The extension helps Kumon instructors assign homework and mark worksheets
+    inside the Class-Navi web app. It never reads, stores, or transmits student
+    data, worksheet content, or anything from the Class-Navi screen.</li>
+  <li>It sends only a license key and an anonymous install ID to the license
+    server, to verify your paid subscription.</li>
+  <li>Your payment details go to Stripe — we never see or store card numbers.</li>
+  <li>We do not sell data, show ads, or run analytics.</li>
+</ul>
+
+<h2>What the extension sends</h2>
+<table>
+  <tr><th>Data</th><th>Where it goes</th><th>Why</th></tr>
+  <tr><td>License key</td><td>License server (this site)</td><td>Verify your subscription is active</td></tr>
+  <tr><td>Anonymous install ID</td><td>License server (this site)</td><td>Enforce the per-key device limit</td></tr>
+  <tr><td>Pattern preferences, comment settings</td><td>Nowhere — stored only in your browser's local storage</td><td>Your personal settings</td></tr>
+</table>
+
+<h2>What the license server stores</h2>
+<ul>
+  <li>License keys, the email used at purchase or key lookup, subscription
+    status, and a list of device IDs bound to each key.</li>
+  <li>This data exists to operate the subscription: issue keys after payment,
+    validate them, and let you look up your key by email.</li>
+</ul>
+
+<h2>Payments</h2>
+<p>Payments are processed by <a href="https://stripe.com/privacy">Stripe</a>.
+Card numbers and payment details are handled by Stripe under their own
+privacy policy. The license server never receives or stores card data.</p>
+
+<h2>Retention</h2>
+<p>Subscription records are kept while your subscription is active and for a
+reasonable period after cancellation (to handle refunds and support).
+Browser-local settings remain on your device until you remove the extension.</p>
+
+<h2>Sharing</h2>
+<p>We do not sell, rent, or share your data with anyone except the processors
+named above (Stripe for payments). No third-party analytics, no advertising,
+no location tracking.</p>
+
+<h2>Security</h2>
+<p>All communication with the license server happens over HTTPS. Data is
+minimized to what the service needs.</p>
+
+<h2>Your rights / deletion</h2>
+<p>To request deletion of your license records, email
+<a href="mailto:support@nimira-timer.com">support@nimira-timer.com</a> from
+the address used at purchase. We will remove the associated license keys and
+device bindings. Cancelling your subscription stops all future billing
+(manageable in the Stripe customer portal).</p>
+
+<h2>Contact</h2>
+<p>Questions: <a href="mailto:support@nimira-timer.com">support@nimira-timer.com</a>.</p>
+
+<p><a href="/portal">Back to the key lookup portal</a></p>
+</div></body></html>`;
+
 const server = Bun.serve({
   port: PORT,
   async fetch(req) {
@@ -211,6 +292,10 @@ const server = Bun.serve({
       return new Response(PORTAL_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
+    if (req.method === "GET" && path === "/privacy") {
+      return new Response(PRIVACY_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
     // ── admin: mint license keys (protected by ADMIN_TOKEN) ──
     if (req.method === "POST" && path === "/api/admin/keys") {
       const body = await readJson(req);
@@ -233,13 +318,13 @@ const server = Bun.serve({
       // script-relative default (import.meta.dir = server/) — env override
       // for deployed layouts
       const file =
-        process.env.DOWNLOAD_FILE || `${import.meta.dir}/../quick-mark-pro-0.2.0.zip`;
+        process.env.DOWNLOAD_FILE || `${import.meta.dir}/../class-navi-pro-tools-1.0.0.zip`;
       try {
         const data = await Bun.file(file).arrayBuffer();
         return new Response(data, {
           headers: {
             "Content-Type": "application/zip",
-            "Content-Disposition": `attachment; filename="quick-mark-pro-0.2.0.zip"`,
+            "Content-Disposition": `attachment; filename="class-navi-pro-tools-1.0.0.zip"`,
           },
         });
       } catch (e) {

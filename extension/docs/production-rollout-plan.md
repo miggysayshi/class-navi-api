@@ -1,6 +1,15 @@
 # Production rollout plan — Class Navi Pro Tools
 
-> Status: **PLANNING COMPLETE (2026-08-12).** Master checklist that chains
+> Status: **DEPLOYED (2026-08-13/14).** License server LIVE at
+> `https://license.nimira-timer.com` (health/portal/admin all 200).
+> Tunnel: `classnavi-license` (Cloudflare Tunnel, launchd agent
+> `com.classnavi.tunnel`, `~/bin/cloudflared` on the mini). Deploy key
+> `~/.ssh/classnavi_license` → `cynthia@cynthias-mac-mini` over Tailscale.
+> `nimira-timer.com` zone moved to Cloudflare nameservers
+> (nena/skip.ns.cloudflare.com) — Vercel apex record grey (DNS-only),
+> license record PROXIED (orange). Remaining: `sudo pmset -a sleep 0
+> disksleep 0` on the mini (never ran — sudo password needed), reboot
+> survival test, delete the cfat_ API token.
 > the pieces: store plan (`extension/docs/store-submission-plan.md`), server
 > deploy runbook (`server/docs/mac-mini-hosting.md`), licensing skill
 > (`extension-subscription-licensing`). Work bottom-up: each phase's
