@@ -30,11 +30,15 @@ From this Mac (over Tailscale SSH):
 
 ```sh
 rsync -avz -e "ssh -i ~/.ssh/classnavi_license" \
+  --exclude .env --exclude license.db --exclude "*.db-journal" \
   server/ <user>@cynthias-mac-mini:~/class-navi-license-server/
 ```
 
-This copies `server/` INCLUDING `.env` (Stripe keys) — do NOT commit the
-secrets anywhere; the mini's home dir is the only home for them.
+⚠️ **ALWAYS exclude `.env` (and `license.db`) from deploys** — the local
+dev `.env` has localhost `BASE_URL` and would clobber the mini's production
+values (hit 2026-08-14: Phase 2 deploy reverted BASE_URL to localhost).
+The `.env` is managed ON the mini only. First deploy: rsync once WITH
+`.env` (or scp it separately), then never again.
 
 ## 3. `.env` on the mini
 
