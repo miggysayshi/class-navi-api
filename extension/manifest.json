@@ -7,8 +7,7 @@
   "permissions": ["storage"],
   "host_permissions": [
     "https://class-navi.digital.kumon.com/*",
-    "http://localhost:8787/*",
-    "https://YOUR-LICENSE-SERVER.example.com/*"
+    "https://license.nimira-timer.com/*"
   ],
   "background": { "service_worker": "src/background.js" },
   "content_scripts": [

@@ -1,5 +1,9 @@
 // server/test/license.test.js — pure license-DB logic (bun:sqlite, :memory:)
 import { test, expect, beforeAll } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { openDb, generateKey, upsertLicense, setSubscriptionStatus, activateInstance, licensesForEmail, issueKeys } from "../db.js";
 
 let db;
@@ -7,6 +11,41 @@ let db;
 beforeAll(() => {
   db = openDb(":memory:");
 });
+
+/** Run fn with a fresh temp on-disk DB path; always delete it in cleanup. */
+function withTempDb(fn) {
+  const dir = mkdtempSync(join(tmpdir(), "qmp-migration-"));
+  const dbPath = join(dir, "test.db");
+  try {
+    fn(dbPath);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Create a v1-shape (pre-migration) file DB exactly as the original openDb built it. */
+function createOldShapeDb(dbPath) {
+  const raw = new Database(dbPath);
+  raw.exec(`
+    CREATE TABLE licenses (
+      key TEXT PRIMARY KEY,
+      email TEXT,
+      customer_id TEXT,
+      subscription_id TEXT UNIQUE,
+      status TEXT NOT NULL DEFAULT 'active',
+      expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE instances (
+      license_key TEXT NOT NULL,
+      instance_id TEXT NOT NULL,
+      activated_at INTEGER NOT NULL,
+      PRIMARY KEY (license_key, instance_id)
+    );
+  `);
+  return raw;
+}
 
 test("generateKey produces QMP-XXXX-XXXX-XXXX-XXXX without ambiguous chars", () => {
   const key = generateKey();
@@ -83,4 +122,94 @@ test("issueKeys mints N unique active keys (admin path)", () => {
   // normalized email → findable via the portal lookup
   const found = licensesForEmail(db, "admin@example.com");
   expect(found.length).toBe(3);
+});
+
+test("replay with a different candidate returns the original persisted key and one row", () => {
+  const key = generateKey();
+  const first = upsertLicense(db, { key, email: "a@b.c", customerId: "cus_6", subscriptionId: "sub_6", status: "active" });
+  expect(first).toBe(key);
+  const replayKey = generateKey();
+  const second = upsertLicense(db, { key: replayKey, email: "a@b.c", customerId: "cus_6", subscriptionId: "sub_6", status: "active" });
+  expect(second).toBe(key);
+  expect(second).not.toBe(replayKey);
+  const rows = db.query(`SELECT COUNT(*) AS n FROM licenses WHERE subscription_id = 'sub_6'`).get();
+  expect(rows.n).toBe(1);
+  const persisted = db.query(`SELECT key FROM licenses WHERE subscription_id = 'sub_6'`).get();
+  expect(persisted.key).toBe(key);
+});
+
+test("upsertLicense normalizes email in the DB layer", () => {
+  const key = generateKey();
+  upsertLicense(db, { key, email: "  Billing@Example.COM ", customerId: "cus_7", subscriptionId: "sub_7", status: "active" });
+  const row = db.query(`SELECT email FROM licenses WHERE key = ?`).get(key);
+  expect(row.email).toBe("billing@example.com");
+  // portal lookup finds it via any casing
+  const found = licensesForEmail(db, "BILLING@example.com");
+  expect(found.length).toBe(1);
+  expect(found[0].key).toBe(key);
+});
+
+test("migration adds the billing columns to an old-shape DB and preserves its license row", () => {
+  withTempDb((dbPath) => {
+    const raw = createOldShapeDb(dbPath);
+    const oldKey = generateKey();
+    raw.query(
+      `INSERT INTO licenses (key, email, customer_id, subscription_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(oldKey, "old@example.com", "cus_old", "sub_old", "active", 1000, 1000);
+    raw.close();
+
+    const db = openDb(dbPath); // must migrate the old-shape file DB
+    const cols = db.query(`PRAGMA table_info(licenses)`).all().map((c) => c.name);
+    for (const col of ["source", "current_period_end", "cancel_at_period_end", "last_stripe_event_created"]) {
+      expect(cols).toContain(col);
+    }
+    const row = db.query(`SELECT * FROM licenses WHERE key = ?`).get(oldKey);
+    expect(row).not.toBeNull();
+    expect(row.email).toBe("old@example.com");
+    expect(row.subscription_id).toBe("sub_old");
+    // new columns carry safe defaults
+    expect(row.source).toBe("stripe_paid");
+    expect(row.cancel_at_period_end).toBe(0);
+    expect(row.current_period_end).toBeNull();
+    expect(row.last_stripe_event_created).toBeNull();
+    db.close();
+  });
+});
+
+test("opening the migrated DB again is idempotent and records each migration once", () => {
+  withTempDb((dbPath) => {
+    const first = openDb(dbPath);
+    const key = generateKey();
+    first.query(
+      `INSERT INTO licenses (key, email, customer_id, subscription_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(key, "keep@example.com", "cus_k", "sub_k", 1000, 1000);
+    first.close();
+
+    const db = openDb(dbPath); // reopen: migrations must not re-run
+    const applied = db.query(`SELECT version, name FROM schema_migrations ORDER BY version`).all();
+    expect(applied.length).toBe(7);
+    expect(applied[0].version).toBe(1);
+    expect(applied[0].name).toBe("license-billing-fields");
+    expect(applied[1].version).toBe(2);
+    expect(applied[1].name).toBe("processed-stripe-events");
+    expect(applied[2].version).toBe(3);
+    expect(applied[2].name).toBe("stripe-subscription-states");
+    expect(applied[3].version).toBe(4);
+    expect(applied[3].name).toBe("durable-email-outbox");
+    expect(applied[4].version).toBe(5);
+    expect(applied[4].name).toBe("browser-family-slots");
+    expect(applied[5].version).toBe(6);
+    expect(applied[5].name).toBe("secure-recovery");
+    expect(applied[6].version).toBe(7);
+    expect(applied[6].name).toBe("family-invite-codes");
+    // each column exists exactly once
+    const sourceCols = db.query(`PRAGMA table_info(licenses)`).all().filter((c) => c.name === "source");
+    expect(sourceCols.length).toBe(1);
+    // data survives the idempotent reopen
+    const row = db.query(`SELECT key, email FROM licenses WHERE subscription_id = 'sub_k'`).get();
+    expect(row.email).toBe("keep@example.com");
+    db.close();
+  });
 });

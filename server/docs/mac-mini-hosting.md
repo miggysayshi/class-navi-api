@@ -11,9 +11,9 @@
 ## Prerequisites
 
 - SSH access to the mini (see AUTHORIZE.md / the one-liner in the chat).
-- A **domain** on Cloudflare (the tunnel needs a stable hostname — Stripe
-  webhooks must not change URL). Any registrar works; Cloudflare free plan
-  is fine. Example used below: `license.miguel.example` → real hostname TBD.
+- The active Cloudflare zone for `nimira-timer.com`. The named tunnel uses the
+  stable, proxied hostname `license.nimira-timer.com`; never use a temporary
+  quick-tunnel URL for webhooks.
 - The worktree `server/` (Bun + bun:sqlite + stripe) and its `.env`.
 
 ## 1. Install Bun on the mini
@@ -49,11 +49,19 @@ STRIPE_SECRET_KEY=sk_live_...      # or sk_test_... until launch
 STRIPE_WEBHOOK_SECRET=whsec_...    # real one, 40+ chars
 BASE_URL=https://license.<domain>
 PORT=8787
-MAX_INSTANCES=3
 ADMIN_TOKEN=<long random>
+MANAGEMENT_TOKEN_SECRET=<64 hex chars from: openssl rand -hex 32>
+RESEND_API_KEY=re_...
+RESEND_WEBHOOK_SECRET=whsec_...
+EMAIL_FROM="Class Navi Pro Tools <licenses@send.nimira-timer.com>"
+EMAIL_REPLY_TO=support@nimira-timer.com
 DB_PATH=/Users/<user>/class-navi-license-server/license.db
 DOWNLOAD_FILE=/Users/<user>/class-navi-license-server/class-navi-pro-tools-1.0.0.zip
 ```
+
+`MAX_INSTANCES` is obsolete. Entitlement is now one Chrome slot plus one Edge
+slot per license. Keep `BASE_URL` on public HTTPS in production; recovery link
+construction intentionally rejects public HTTP origins.
 
 ## 4. launchd — auto-start + keep-alive
 
@@ -74,6 +82,7 @@ DOWNLOAD_FILE=/Users/<user>/class-navi-license-server/class-navi-pro-tools-1.0.0
   <string>/Users/<user>/class-navi-license-server</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
   <key>StandardOutPath</key><string>/Users/<user>/class-navi-license-server/server.log</string>
   <key>StandardErrorPath</key><string>/Users/<user>/class-navi-license-server/server.err.log</string>
 </dict>
@@ -130,19 +139,40 @@ Verify: `curl -s https://license.<domain>/health` from anywhere.
   - manifest `host_permissions`: replace localhost + placeholder with
     `https://license.<domain>/*`
   - `src/background.js`: `API_BASE`
-  - `src/license.js`: `CHECKOUT_URL` (live payment link), `PORTAL_URL`
+  - `src/license.js`: `CHECKOUT_URL` (live payment link), `PORTAL_URL`,
+    `RECOVERY_URL=https://license.<domain>/portal`
 - Rebuild zip + strip `qsLicenseDebug` + bump version.
+- Resend dashboard → webhook endpoint:
+  `https://license.<domain>/api/resend/webhook`. Store its Svix signing secret
+  as `RESEND_WEBHOOK_SECRET`, restart, then verify a signed event.
 
-## 8. Backup (cheap insurance)
+## 8. Backup and rollback
 
-The whole DB is one file — nightly rsync to the MacBook via launchd or
-cron: `rsync -avz <user>@cynthias-mac-mini:~/class-navi-license-server/license.db ~/backups/license-$(date +%F).db` (keep last N).
+Do not rsync a live SQLite file. Under rollback-journal mode, a file copy can
+be internally inconsistent. Before the first boot that applies new migrations,
+make a consistent snapshot on the mini:
+
+```sh
+cd ~/class-navi-license-server
+mkdir -p backups
+snapshot="backups/license-predeploy-$(date +%Y%m%d-%H%M%S).db"
+/usr/bin/sqlite3 license.db ".backup '$snapshot'"
+/usr/bin/sqlite3 "$snapshot" "PRAGMA integrity_check;"
+```
+
+Require `ok` from `PRAGMA integrity_check` before restarting the service. Then
+rsync the completed snapshot file to the MacBook and keep the last N snapshots.
+Use the same SQLite `.backup` method for nightly backups. Migrations are
+forward-only; restoring a verified pre-deploy snapshot is the rollback path.
 
 ## Verification checklist
 
 - [ ] `curl https://license.<domain>/health` → ok
 - [ ] `POST /api/license/validate` with a seeded key → `{valid: true}`
-- [ ] `/portal` page loads; `/admin` loads
+- [ ] `/portal`, `/manage`, `/privacy`, and `/admin` load
+- [ ] legacy `/api/portal/keys` returns 404
+- [ ] known and unknown recovery requests return the same neutral response
+- [ ] Resend signed webhook test succeeds; no raw key/email appears in logs
 - [ ] Stripe test checkout → webhook → server log shows new key
 - [ ] Extension on localhost test → prod server: activate with the key
 - [ ] Reboot the mini → server + tunnel come back (launchd + cloudflared

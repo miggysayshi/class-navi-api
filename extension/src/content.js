@@ -3,6 +3,25 @@
 var QS = globalThis.QS || (globalThis.QS = {});
 console.log("[QuickSet] bridge ready (ISOLATED world)");
 
+// Mirror the license.js/background.js build-time seam so the
+// direct-fetch fallback does NOT hardcode a family (a Chrome build must not
+// consume the Edge slot). Flip BROWSER_FAMILY to "chrome" for the Chrome build.
+const API_BASE = "https://license.nimira-timer.com";
+const BROWSER_FAMILY = "edge"; // EDIT-ME: flip to "chrome" for the Chrome build
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * Pure: build a direct-fetch license request body carrying the fixed
+ * browser_family (snake_case; exactly "chrome" or "edge"), alongside
+ * license_key/instance_id. Defaults to the build-time BROWSER_FAMILY when
+ * family is omitted or unrecognized. Shared by activation and validation
+ * so they cannot drift (mirrors background.js buildRequestBody).
+ */
+function buildDirectBody(base, family) {
+  const f = family === "chrome" || family === "edge" ? family : BROWSER_FAMILY;
+  return Object.assign({}, base || {}, { browser_family: f });
+}
+
 /**
  * Send a message to the background worker using the CALLBACK form —
  * the promise form of chrome.runtime.sendMessage can silently resolve
@@ -42,10 +61,10 @@ async function directFetch(workerType, payload) {
       (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) ||
       `i-${Date.now()}`;
     if (!st.qsInstance) await chrome.storage.local.set({ qsInstance: instance });
-    const resp = await fetch(`http://localhost:8787${path}`, {
+    const resp = await fetch(`${API_BASE}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ license_key: payload.key, instance_id: instance }),
+      body: JSON.stringify(buildDirectBody({ license_key: payload.key, instance_id: instance }, BROWSER_FAMILY)),
     });
     const j = await resp.json();
     return { ...(j || {}), _direct: true };
@@ -59,7 +78,8 @@ async function relayToWorker(event, workerType, outType) {
     window.postMessage({ type: outType, requestId: event.data.requestId, result: result || {} }, "*");
   try {
     const result = await sendToWorker(workerType, event.data.payload);
-    console.log(`[QuickSet] ISOLATED: worker replied to ${workerType}:`, JSON.stringify(result).slice(0, 160));
+    // never dump the full result — it can carry key-like data
+    console.log(`[QuickSet] ISOLATED: worker replied to ${workerType} (ok=${result && result.ok !== undefined ? result.ok : "n/a"})`);
     // a usable worker reply has one of these fields; anything else means the
     // worker path silently failed → fall back to the direct fetch
     if (result && (result.ok !== undefined || result.valid !== undefined || result.activated !== undefined || result.key !== undefined)) {
@@ -68,7 +88,7 @@ async function relayToWorker(event, workerType, outType) {
     }
     console.log(`[QuickSet] ISOLATED: worker path empty — using direct fetch`);
     const fb = await directFetch(workerType, event.data.payload);
-    console.log(`[QuickSet] ISOLATED: direct fetch result:`, JSON.stringify(fb).slice(0, 160));
+    console.log(`[QuickSet] ISOLATED: direct fetch ok=${fb && fb.valid !== undefined ? fb.valid : (fb && fb.activated !== undefined ? fb.activated : "n/a")}`);
     out(fb);
   } catch (err) {
     out({ error: String((err && err.message) || err) });
@@ -97,7 +117,8 @@ window.addEventListener("message", async (event) => {
     relayToWorker(event, "qs-license-set-key", "qs:license-set-key-response");
     return;
   }
-  if (data.type === "qs:license-set-debug") {
-    relayToWorker(event, "qs-license-set-debug", "qs:license-set-debug-response");
-  }
 });
+
+// Expose the pure seam + direct fetch so tests can verify the fallback uses
+// the build-time family constant (harmless in the ISOLATED world runtime).
+QS.content = { API_BASE, BROWSER_FAMILY, buildDirectBody, directFetch };

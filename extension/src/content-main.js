@@ -91,6 +91,7 @@ function runBoots() {
 // called by the license gate's Activate button when a key is accepted
 window.__qsLicenseActivated = () => {
   window.__qsLicensed = true;
+  if (QS.license && QS.license.attachAppUiControl) QS.license.attachAppUiControl();
   runBoots();
   refreshLevelStats();
 };
@@ -103,6 +104,7 @@ const mo = new MutationObserver(() => {
     window.__qsLicensed = QS.license.isActive(lic);
     if (window.__qsLicensed) {
       QS.license.hideGate();
+      if (QS.license.attachAppUiControl) QS.license.attachAppUiControl();
       runBoots();
     } else {
       QS.license.showGate(lic);

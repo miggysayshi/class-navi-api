@@ -1,24 +1,229 @@
 // server/index.js — Quick Mark Pro license server.
 // Routes:
-//   POST /api/license/activate {license_key, instance_id} → bind + validate
-//   POST /api/license/validate {license_key, instance_id} → validate
+//   POST /api/license/activate {license_key, instance_id, browser_family} → bind + validate a browser-family slot
+//   POST /api/license/validate {license_key, instance_id, browser_family} → read-only validate a browser-family slot
 //   POST /api/stripe/webhook                                   → Stripe events
-//   GET  /api/portal/keys?email=...                            → key lookup
-//   GET  /portal                                                → portal page
+//   POST /api/resend/webhook                                   → Resend (Svix-verified) events
+//   POST /api/recovery/request                                 → secure email-recovery (HMAC rate-limited, no raw-key lookup)
+//   POST /api/manage/inspect                                   → masked safe-shape inspection of a management token
+//   POST /api/manage/reset                                     → consume a reset management token to free a browser slot
+//   POST /api/invites/redeem                                   → neutral family-invite redemption
+//   POST /api/admin/invites/mint                               → bearer-authenticated invite minting
+//   POST /api/admin/family/revoke                              → bearer-authenticated family-license revocation
+//   GET  /portal                                                → email-recovery form (recovery portal, not a key lookup)
+//   GET  /manage                                                → fragment-only management page (consumes /api/manage/inspect + /api/manage/reset)
+//   GET  /invite                                                → family-invite redemption form
 //   GET  /privacy                                               → privacy policy
+//   GET  /health                                                → ok + email PII-free snapshot
 // Environment: see .env.example.
-import { openDb, generateKey, upsertLicense, setSubscriptionStatus, activateInstance, licensesForEmail, issueKeys } from "./db.js";
+import { openDb, issueKeys, emailQueueHealth } from "./db.js";
+import { activateBrowserSlot, validateBrowserSlot } from "./browser-slots.js";
+import { createStripeWebhookHandler, isStripeServerKey } from "./stripe-webhook.js";
+import { createResendWebhookHandler } from "./resend-webhook.js";
+import { createResendAdapter, DEFAULT_FROM, DEFAULT_REPLY_TO } from "./email.js";
+import { createEmailWorker } from "./email-worker.js";
+import { createEmailScheduler } from "./email-scheduler.js";
+import { createRecoveryHttpService } from "./recovery-http.js";
+import { createRecoveryMessagePreparer, RECOVERY_OUTBOX_KIND } from "./recovery-email.js";
+import { createInviteHttpService } from "./invite-http.js";
+import { safeSecretEqual } from "./auth.js";
 
-const SECRET = process.env.STRIPE_SECRET_KEY;
-const WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
 const BASE_URL = process.env.BASE_URL || "http://localhost:8787";
 const PORT = Number(process.env.PORT || 8787);
-const MAX_INSTANCES = Number(process.env.MAX_INSTANCES || 3);
 const DB_PATH = process.env.DB_PATH || "license.db";
 
+// Recovery-management secret. Blank/short disables every recovery POST with a
+// fixed 503 envelope; the GET pages still render (with no config leaks). Must
+// be at least 16 random bytes — see .env.example.
+const MANAGEMENT_TOKEN_SECRET = process.env.MANAGEMENT_TOKEN_SECRET || "";
+
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET || "";
+const EMAIL_FROM = process.env.EMAIL_FROM || DEFAULT_FROM;
+const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || DEFAULT_REPLY_TO;
+
+/**
+ * Parse a positive-integer env value with a default. Invalid / non-positive
+ * / non-integer values fall back to the default (never throw, never crash).
+ */
+function positiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (typeof raw !== "string" || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) return fallback;
+  return n;
+}
+
+const _cap = positiveIntEnv("EMAIL_DAILY_CAP", 100);
+const EMAIL_CONFIG = {
+  pollMs: positiveIntEnv("EMAIL_POLL_INTERVAL_MS", 5000),
+  drainMax: positiveIntEnv("EMAIL_DRAIN_MAX_ITER", 20),
+  leaseMs: positiveIntEnv("EMAIL_LEASE_MS", 60000),
+  dailyCap: _cap,
+  // warnAt default 80; clamped to dailyCap when warn > cap.
+  warnAt: Math.min(positiveIntEnv("EMAIL_DAILY_WARN", 80), _cap),
+  retryBaseMs: positiveIntEnv("EMAIL_RETRY_BASE_MS", 60000),
+  retryMaxMs: positiveIntEnv("EMAIL_RETRY_MAX_MS", 3600000),
+};
+
+// Recovery tunables (positive integers, fall back to safe defaults).
+const RECOVERY_WINDOW_MS = positiveIntEnv("RECOVERY_WINDOW_MS", 900000); // 15 min
+const RECOVERY_EMAIL_LIMIT = positiveIntEnv("RECOVERY_EMAIL_LIMIT", 3);
+const RECOVERY_IP_LIMIT = positiveIntEnv("RECOVERY_IP_LIMIT", 10);
+// Fixed minimum neutral recovery-response delay (ms) that defeats the
+// membership/liveness timing oracle (known emails do DB/crypto work, unknown
+// emails answer faster). 0 env falls back to 350 (positiveIntEnv); tests use 1.
+const RECOVERY_MIN_RESPONSE_MS = positiveIntEnv("RECOVERY_MIN_RESPONSE_MS", 350);
+
+// Family invite tunables (positive integers; invalid/blank fall back to defaults).
+const INVITE_WINDOW_MS = positiveIntEnv("INVITE_WINDOW_MS", 900000); // 15 min
+const INVITE_IP_LIMIT = positiveIntEnv("INVITE_IP_LIMIT", 20);
+const INVITE_CODE_LIMIT = positiveIntEnv("INVITE_CODE_LIMIT", 5);
+const INVITE_ADMIN_IP_LIMIT = positiveIntEnv("INVITE_ADMIN_IP_LIMIT", 20);
+const INVITE_MIN_RESPONSE_MS = positiveIntEnv("INVITE_MIN_RESPONSE_MS", 350);
+
 const db = openDb(DB_PATH);
-const stripe = SECRET && SECRET.startsWith("sk_") ? (await import("stripe")).default(SECRET) : null;
+const stripe =
+  isStripeServerKey(STRIPE_SECRET)
+    ? (await import("stripe")).default(STRIPE_SECRET)
+    : null;
+
+// Stripe webhook handler lives in stripe-webhook.js (importable without
+// starting the server). It handles idempotent processing, monotonic
+// subscription-state authority, pre-checkout state application, and redacted
+// logging. Passed the live db + stripe client; when stripe is unconfigured it
+// serves the fixed "stripe not configured" 500.
+const stripeWebhookHandler = createStripeWebhookHandler({
+  db,
+  stripe,
+  webhookSecret: STRIPE_WEBHOOK_SECRET,
+});
+
+// Always construct the Resend webhook handler — the handler itself returns a
+// fixed 500 when webhookSecret is blank, so missing-secret configs stay safe.
+const resendWebhookHandler = createResendWebhookHandler({
+  db,
+  webhookSecret: RESEND_WEBHOOK_SECRET,
+});
+
+// Always construct the recovery HTTP service. With a blank/short secret the
+// service marks `configured=false` and POST handlers return a fixed 503
+// envelope; the GET pages still render with no config values disclosed. The
+// service HMACs the client IP — we never log/store raw IP bytes.
+const recoveryService = createRecoveryHttpService({
+  db,
+  secret: MANAGEMENT_TOKEN_SECRET,
+  baseUrl: BASE_URL,
+  windowMs: RECOVERY_WINDOW_MS,
+  emailLimit: RECOVERY_EMAIL_LIMIT,
+  ipLimit: RECOVERY_IP_LIMIT,
+  minimumResponseMs: RECOVERY_MIN_RESPONSE_MS,
+});
+
+const inviteService = createInviteHttpService({
+  db,
+  adminToken: ADMIN_TOKEN,
+  rateSecret: MANAGEMENT_TOKEN_SECRET,
+  windowMs: INVITE_WINDOW_MS,
+  inviteIpLimit: INVITE_IP_LIMIT,
+  inviteCodeLimit: INVITE_CODE_LIMIT,
+  adminIpLimit: INVITE_ADMIN_IP_LIMIT,
+  minimumResponseMs: INVITE_MIN_RESPONSE_MS,
+});
+
+// Recovery message preparer. Only the FULL preparer is wired when the
+// management secret is valid (>=16 chars). When the secret is missing/short we
+// still pass a small local preparer that:
+//   • lets the welcome-email payload through unchanged (identity), so the
+//     worker can dispatch welcome emails when Resend is enabled;
+//   • REJECTS any outbox row whose kind === "recovery" by throwing a fixed,
+//     redacted internal error. The email worker catches the throw, marks the
+//     row dead with category='preparation', and logs a fixed redacted line —
+//     the encrypted outbox payload is NEVER passed to the provider as a
+//     message.
+// This is the "fail closed at preparation" gate. The recovery HTTP service's
+// own `configured=false` already short-circuits POSTs at the HTTP layer; this
+// preparer is the belt-and-braces for any row that somehow slipped into the
+// outbox while the secret was missing/short.
+const hasManagementSecret =
+  typeof MANAGEMENT_TOKEN_SECRET === "string" &&
+  MANAGEMENT_TOKEN_SECRET.trim().length >= 16;
+const PREP_REJECTED_ERROR = "recovery-preparation-rejected";
+const recoveryPreparer = hasManagementSecret
+  ? createRecoveryMessagePreparer({
+      db,
+      secret: MANAGEMENT_TOKEN_SECRET,
+      baseUrl: BASE_URL,
+      from: EMAIL_FROM,
+      replyTo: EMAIL_REPLY_TO,
+    })
+  : async function identityOrReject({ row, payload }) {
+      if (row && row.kind === RECOVERY_OUTBOX_KIND) {
+        throw new Error(PREP_REJECTED_ERROR);
+      }
+      return payload;
+    };
+
+// Email scheduler is constructed ONLY when RESEND_API_KEY is non-blank. With
+// a blank/whitespace key we leave both the adapter and the scheduler off —
+// the server still starts, Stripe still queues, and /health still surfaces DB
+// counts + disabled-safe runtime/config fields. The scheduler's worker uses
+// the recovery preparer above as its `prepareMessage` so any outbox row
+// dispatched by the worker goes through the sealed-token hydration + send-time
+// re-verification gate.
+const emailEnabled = RESEND_API_KEY.trim() !== "";
+let emailScheduler = null;
+if (emailEnabled) {
+  const adapter = createResendAdapter({
+    apiKey: RESEND_API_KEY,
+    from: EMAIL_FROM,
+    replyTo: EMAIL_REPLY_TO,
+  });
+  const deliverNext = createEmailWorker({
+    db,
+    sender: adapter,
+    leaseMs: EMAIL_CONFIG.leaseMs,
+    dailyCap: EMAIL_CONFIG.dailyCap,
+    warnAt: EMAIL_CONFIG.warnAt,
+    retryBaseMs: EMAIL_CONFIG.retryBaseMs,
+    retryMaxMs: EMAIL_CONFIG.retryMaxMs,
+    prepareMessage: recoveryPreparer,
+  });
+  emailScheduler = createEmailScheduler({
+    deliverNext,
+    queueHealth: () => emailQueueHealth(db, Date.now()),
+    intervalMs: EMAIL_CONFIG.pollMs,
+    drainMax: EMAIL_CONFIG.drainMax,
+  });
+} else {
+  console.log("[email] scheduler disabled");
+}
+
+/**
+ * Resolve the client IP for the recovery flow. We never trust
+ * X-Forwarded-For (it's spoofable and the server is hosted behind a known
+ * proxy that exposes CF-Connecting-IP). Order:
+ *   1) Trimmed CF-Connecting-IP header if present.
+ *   2) server.requestIP(req)?.address — the bare host socket peer.
+ *   3) Fixed "unknown" (no PII leak; service HMACs whatever we return).
+ * The raw IP is never logged or stored — the service hashes it before it
+ * touches the rate-limit table.
+ */
+function getClientIp(req) {
+  const cf = req.headers.get("cf-connecting-ip");
+  if (typeof cf === "string") {
+    const trimmed = cf.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  const ip = server.requestIP(req);
+  if (ip && typeof ip.address === "string" && ip.address.length > 0) {
+    return ip.address;
+  }
+  return "unknown";
+}
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -41,77 +246,48 @@ async function readJson(req) {
   }
 }
 
-/** Stripe webhook: subscription lifecycle → license lifecycle. */
-async function handleWebhook(req) {
-  if (!stripe || !WEBHOOK_SECRET) return json(500, { error: "stripe not configured" });
-  const raw = await req.text();
-  const sig = req.headers.get("stripe-signature");
-  let event;
-  try {
-    event = stripe.webhooks.constructEvent(raw, sig, WEBHOOK_SECRET);
-  } catch (e) {
-    return json(400, { error: `webhook signature invalid: ${e.message}` });
-  }
-  switch (event.type) {
-    case "checkout.session.completed": {
-      const cs = event.data.object;
-      const subId = cs.subscription || null;
-      const email = cs.customer_details && cs.customer_details.email ? cs.customer_details.email : null;
-      if (subId) {
-        const key = upsertLicense(db, {
-          key: generateKey(),
-          email,
-          customerId: cs.customer || null,
-          subscriptionId: subId,
-          status: "active",
-        });
-        console.log(`[license] new license ${key} for ${email || cs.customer} (${subId})`);
-      }
-      break;
-    }
-    case "customer.subscription.updated":
-    case "customer.subscription.created": {
-      const sub = event.data.object;
-      const statusMap = {
-        active: "active",
-        trialing: "trialing",
-        past_due: "past_due",
-        unpaid: "past_due",
-        canceled: "canceled",
-        incomplete: "incomplete",
-        incomplete_expired: "canceled",
-        paused: "paused",
-      };
-      const st = statusMap[sub.status] || "canceled";
-      const key = setSubscriptionStatus(db, sub.id, st);
-      if (key) console.log(`[license] ${sub.id} → ${st} (${key})`);
-      break;
-    }
-    case "customer.subscription.deleted": {
-      const sub = event.data.object;
-      const key = setSubscriptionStatus(db, sub.id, "canceled");
-      if (key) console.log(`[license] ${sub.id} deleted → canceled (${key})`);
-      break;
-    }
-    case "invoice.payment_succeeded": {
-      const inv = event.data.object;
-      const subId = inv.subscription;
-      if (subId) {
-        const key = setSubscriptionStatus(db, subId, "active");
-        if (key) console.log(`[license] renewal paid → active (${key})`);
-      }
-      break;
-    }
-    default:
-      break;
-  }
-  return json(200, { received: true });
+/**
+ * Non-sensitive billing fields to expose alongside route results, read ONLY
+ * from the license row (never email/customer/subscription/key). A missing
+ * license yields an empty object. cancel_at_period_end is surfaced as a
+ * boolean; a valid active cancellation-at-period-end license stays valid and
+ * returns its period-end date + flag.
+ */
+function billingFields(licenseKey) {
+  if (typeof licenseKey !== "string" || licenseKey.trim() === "") return {};
+  const lic = db
+    .query(`SELECT expires_at, current_period_end, cancel_at_period_end FROM licenses WHERE key = ?`)
+    .get(licenseKey.trim());
+  if (!lic) return {};
+  return {
+    expiresAt: lic.expires_at ?? null,
+    current_period_end: lic.current_period_end ?? null,
+    cancel_at_period_end: !!lic.cancel_at_period_end,
+  };
 }
+
+/** Map a browser-slot service failure code to HTTP status. Request problems →
+ * 400; entitlement/slot problems → 403. */
+function slotFailureStatus(code) {
+  return code === "invalid-input" || code === "family-undetermined" ? 400 : 403;
+}
+
+/** Parse the shared {license_key, instance_id, browser_family} request body. */
+function parseSlotRequest(body) {
+  if (!body || typeof body !== "object") return null;
+  const licenseKey = typeof body.license_key === "string" ? body.license_key.trim() : "";
+  const instanceId = typeof body.instance_id === "string" ? body.instance_id.trim() : "";
+  const browserFamily = typeof body.browser_family === "string" ? body.browser_family.trim() : "";
+  if (!licenseKey || !instanceId || !browserFamily) return null;
+  return { licenseKey, browserFamily, instanceId };
+}
+
+/** Stripe webhook: handled by createStripeWebhookHandler (stripe-webhook.js). */
 
 const ADMIN_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Quick Mark Pro — Admin</title>
 <style>
-  body { font-family: -apple-system,'Segoe UI',Roboto,sans-serif; background:#f4f7f9; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  body { font-family: -apple-system,'Segoe UI',Roboto,sans-serif; background:#f4f7fa; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
   .card { background:#fff; border:1px solid #d9e2e6; border-radius:12px; padding:28px 32px; width:460px; max-width:94vw; box-shadow:0 8px 24px rgba(0,0,0,.08); }
   h1 { font-size:18px; color:#1c3a5e; margin:0 0 4px; }
   p { font-size:12px; color:#8aa5b0; margin:0 0 16px; }
@@ -163,7 +339,7 @@ const ADMIN_HTML = `<!doctype html>
 const PRIVACY_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Privacy Policy — Class Navi Pro Tools</title>
 <style>
-  body { font-family: -apple-system,'Segoe UI',Roboto,sans-serif; background:#f4f7f9; color:#1c3a5e; margin:0; padding:32px 16px; line-height:1.6; }
+  body { font-family: -apple-system,'Segoe UI',Roboto,sans-serif; background:#f4f7fa; color:#1c3a5e; margin:0; padding:32px 16px; line-height:1.6; }
   .card { background:#fff; border:1px solid #d9e2e6; border-radius:12px; padding:28px 32px; max-width:720px; margin:0 auto; box-shadow:0 8px 24px rgba(0,0,0,.08); }
   h1 { font-size:22px; margin:0 0 4px; }
   .meta { color:#5b738c; font-size:13px; margin-bottom:20px; }
@@ -176,7 +352,7 @@ const PRIVACY_HTML = `<!doctype html>
   a { color:#2a6df4; }
 </style></head><body><div class="card">
 <h1>Privacy Policy</h1>
-<div class="meta">Class Navi Pro Tools (the "extension") — last updated August 14, 2026</div>
+<div class="meta">Class Navi Pro Tools (the "extension") — last updated August 17, 2026</div>
 
 <p>This page explains what data the extension and its license service collect,
 why, and how it is handled. It is a plain-English summary in one page.</p>
@@ -188,6 +364,9 @@ why, and how it is handled. It is a plain-English summary in one page.</p>
     data, worksheet content, or anything from the Class-Navi screen.</li>
   <li>It sends only a license key and an anonymous install ID to the license
     server, to verify your paid subscription.</li>
+  <li>If you forget your key, you can request a secure email-recovery link from
+    the portal. The link uses a one-time sealed token; we never show the key
+    on screen after recovery.</li>
   <li>Your payment details go to Stripe — we never see or store card numbers.</li>
   <li>We do not sell data, show ads, or run analytics.</li>
 </ul>
@@ -202,10 +381,14 @@ why, and how it is handled. It is a plain-English summary in one page.</p>
 
 <h2>What the license server stores</h2>
 <ul>
-  <li>License keys, the email used at purchase or key lookup, subscription
-    status, and a list of device IDs bound to each key.</li>
+  <li>License keys, the email used at purchase, subscription status, and a
+    list of device IDs bound to each key.</li>
+  <li>Short-lived sealed management tokens (used only for the email-recovery
+    and browser-reset links). The plaintext token is never stored — only a
+    hash + AES-GCM seal.</li>
   <li>This data exists to operate the subscription: issue keys after payment,
-    validate them, and let you look up your key by email.</li>
+    validate them, and let you securely recover your key or free a slot by
+    email.</li>
 </ul>
 
 <h2>Payments</h2>
@@ -225,7 +408,9 @@ no location tracking.</p>
 
 <h2>Security</h2>
 <p>All communication with the license server happens over HTTPS. Data is
-minimized to what the service needs.</p>
+minimized to what the service needs. Recovery and reset links use sealed,
+single-use tokens that expire in minutes; IP addresses used to throttle
+recovery requests are stored only as HMAC-SHA256 hashes.</p>
 
 <h2>Your rights / deletion</h2>
 <p>To request deletion of your license records, email
@@ -237,7 +422,7 @@ device bindings. Cancelling your subscription stops all future billing
 <h2>Contact</h2>
 <p>Questions: <a href="mailto:support@nimira-timer.com">support@nimira-timer.com</a>.</p>
 
-<p><a href="/portal">Back to the key lookup portal</a></p>
+<p><a href="/portal">Back to the email-recovery portal</a></p>
 </div></body></html>`;
 
 const server = Bun.serve({
@@ -252,44 +437,128 @@ const server = Bun.serve({
 
     if (req.method === "POST" && path === "/api/license/activate") {
       const body = await readJson(req);
-      if (!body || !body.license_key || !body.instance_id) {
-        return json(400, { error: "license_key and instance_id required" });
+      const input = parseSlotRequest(body);
+      if (!input) {
+        return json(400, {
+          valid: false,
+          code: "invalid-input",
+          browserFamily: null,
+          actions: null,
+          error: "invalid-input",
+        });
       }
-      const r = activateInstance(db, String(body.license_key).trim(), String(body.instance_id), MAX_INSTANCES);
-      return json(r.valid ? 200 : 403, {
-        activated: r.valid,
-        valid: r.valid,
-        expiresAt: r.expiresAt,
-        error: r.valid ? null : r.reason,
+      const r = activateBrowserSlot(db, {
+        licenseKey: input.licenseKey,
+        browserFamily: input.browserFamily,
+        instanceId: input.instanceId,
+      });
+      const billing = billingFields(input.licenseKey);
+      if (r.valid) {
+        // Exact frozen success shape + error:null legacy channel + billing.
+        return json(200, {
+          valid: true,
+          activated: r.activated,
+          code: r.code,
+          browserFamily: r.browserFamily,
+          error: null,
+          ...billing,
+        });
+      }
+      return json(slotFailureStatus(r.code), {
+        valid: false,
+        code: r.code,
+        browserFamily: r.browserFamily,
+        actions: r.actions,
+        error: r.code,
+        ...billing,
       });
     }
 
     if (req.method === "POST" && path === "/api/license/validate") {
       const body = await readJson(req);
-      if (!body || !body.license_key || !body.instance_id) {
-        return json(400, { error: "license_key and instance_id required" });
+      const input = parseSlotRequest(body);
+      if (!input) {
+        return json(400, {
+          valid: false,
+          code: "invalid-input",
+          browserFamily: null,
+          actions: null,
+          error: "invalid-input",
+        });
       }
-      const r = activateInstance(db, String(body.license_key).trim(), String(body.instance_id), MAX_INSTANCES);
-      return json(r.valid ? 200 : 403, {
-        valid: r.valid,
-        expiresAt: r.expiresAt,
-        error: r.valid ? null : r.reason,
+      // Strictly read-only: validateBrowserSlot never activates/mutates a slot
+      // or refreshes last_seen_at. Response is the same mapping as activation,
+      // but validation success carries NO `activated` field.
+      const r = validateBrowserSlot(db, {
+        licenseKey: input.licenseKey,
+        browserFamily: input.browserFamily,
+        instanceId: input.instanceId,
+      });
+      const billing = billingFields(input.licenseKey);
+      if (r.valid) {
+        return json(200, {
+          valid: true,
+          code: r.code,
+          browserFamily: r.browserFamily,
+          error: null,
+          ...billing,
+        });
+      }
+      return json(slotFailureStatus(r.code), {
+        valid: false,
+        code: r.code,
+        browserFamily: r.browserFamily,
+        actions: r.actions,
+        error: r.code,
+        ...billing,
       });
     }
 
     if (req.method === "POST" && path === "/api/stripe/webhook") {
-      return handleWebhook(req);
+      return stripeWebhookHandler(req);
     }
 
-    if (req.method === "GET" && path === "/api/portal/keys") {
-      const email = url.searchParams.get("email");
-      if (!email) return json(400, { error: "email required" });
-      const keys = licensesForEmail(db, email.toLowerCase().trim());
-      return json(200, { keys });
+    if (req.method === "POST" && path === "/api/resend/webhook") {
+      // Delegate the exact raw Request to the Resend webhook core. The core
+      // reads svix headers + raw body itself and returns the fixed 400/500/200
+      // envelope. A blank RESEND_WEBHOOK_SECRET still safely returns 500.
+      return resendWebhookHandler(req);
     }
 
+    // ── Secure email-recovery flow ──────────────────────────────────────
+    // All four routes below delegate to the recovery HTTP service. Client IP
+    // is resolved locally (CF-Connecting-IP → server.requestIP → fixed
+    // "unknown"); the service HMACs the IP before it touches the rate-limit
+    // table. Raw IP bytes are never logged or stored.
+    if (req.method === "POST" && path === "/api/recovery/request") {
+      return recoveryService.requestRecovery(req, {
+        clientIp: getClientIp(req),
+      });
+    }
+    if (req.method === "POST" && path === "/api/manage/inspect") {
+      return recoveryService.inspectToken(req);
+    }
+    if (req.method === "POST" && path === "/api/manage/reset") {
+      return recoveryService.resetToken(req);
+    }
     if (req.method === "GET" && path === "/portal") {
-      return new Response(PORTAL_HTML, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      return recoveryService.portalResponse();
+    }
+    if (req.method === "GET" && path === "/manage") {
+      return recoveryService.manageResponse();
+    }
+
+    if (req.method === "POST" && path === "/api/invites/redeem") {
+      return inviteService.redeemInviteRequest(req, { clientIp: getClientIp(req) });
+    }
+    if (req.method === "POST" && path === "/api/admin/invites/mint") {
+      return inviteService.mintInvites(req, { clientIp: getClientIp(req) });
+    }
+    if (req.method === "POST" && path === "/api/admin/family/revoke") {
+      return inviteService.revokeFamily(req, { clientIp: getClientIp(req) });
+    }
+    if (req.method === "GET" && path === "/invite") {
+      return inviteService.invitePageResponse();
     }
 
     if (req.method === "GET" && path === "/privacy") {
@@ -302,7 +571,7 @@ const server = Bun.serve({
       const token = body && body.token ? String(body.token) : "";
       const email = body && body.email ? String(body.email) : "";
       const count = Number((body && body.count) || 1);
-      if (!ADMIN_TOKEN || token.length !== ADMIN_TOKEN.length || token !== ADMIN_TOKEN) {
+      if (!safeSecretEqual(token, ADMIN_TOKEN)) {
         return json(403, { error: "invalid admin token" });
       }
       if (!email) return json(400, { error: "email required" });
@@ -333,50 +602,47 @@ const server = Bun.serve({
     }
 
     if (req.method === "GET" && path === "/health") {
-      return json(200, { ok: true });
+      // PII-free email snapshot. Disabled → enabled/running/inFlight=false,
+      // last null/"disabled", healthErrors 0. Scheduler runtime fields win
+      // when the scheduler is live. Never includes secrets, recipients, keys,
+      // payloads, or error text.
+      const queue = emailQueueHealth(db, Date.now());
+      const runtime = emailScheduler ? emailScheduler.health() : null;
+      const email = {
+        enabled: runtime ? runtime.enabled : false,
+        running: runtime ? runtime.running : false,
+        inFlight: runtime ? runtime.inFlight : false,
+        lastTickState: runtime ? runtime.lastTickState : null,
+        lastTickAt: runtime ? runtime.lastTickAt : null,
+        intervalMs: EMAIL_CONFIG.pollMs,
+        drainMax: EMAIL_CONFIG.drainMax,
+        dailyCap: EMAIL_CONFIG.dailyCap,
+        warnAt: EMAIL_CONFIG.warnAt,
+        warnTriggered: queue.sentToday >= EMAIL_CONFIG.warnAt,
+        pending: queue.pending,
+        retry: queue.retry,
+        sending: queue.sending,
+        dead: queue.dead,
+        sentToday: queue.sentToday,
+        suppressed: queue.suppressed,
+        oldestDueAgeMs: queue.oldestDueAgeMs,
+        healthErrors: runtime ? runtime.healthErrors : 0,
+      };
+      return json(200, { ok: true, email });
     }
 
     return json(404, { error: "not found" });
   },
 });
 
-console.log(`[license] server on ${BASE_URL}:${PORT} (stripe ${stripe ? "configured" : "NOT configured"})`);
+console.log(
+  `[license] server on ${BASE_URL}:${PORT} (stripe ${stripe ? "configured" : "NOT configured"}, email ${emailEnabled ? "enabled" : "disabled"}, recovery ${recoveryService.configured ? "configured" : "NOT configured"}, invites ${inviteService.configured ? "configured" : "NOT configured"})`
+);
 
-const PORTAL_HTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Quick Mark Pro — License keys</title>
-<style>
-  body { font-family: -apple-system,'Segoe UI',Roboto,sans-serif; background:#f4f7f9; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
-  .card { background:#fff; border:1px solid #d9e2e6; border-radius:12px; padding:28px 32px; width:420px; max-width:92vw; box-shadow:0 8px 24px rgba(0,0,0,.08); }
-  h1 { font-size:18px; color:#1c3a5e; margin:0 0 4px; }
-  p { font-size:12px; color:#8aa5b0; margin:0 0 16px; }
-  input { width:100%; box-sizing:border-box; padding:9px 10px; border:1px solid #cbd5dd; border-radius:6px; font-size:13px; margin-bottom:10px; }
-  button { width:100%; padding:10px 0; background:#2a6df4; color:#fff; border:none; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer; }
-  .key { font-family: ui-monospace, Menlo, monospace; background:#f0f6ff; border:1px solid #cfe0ff; border-radius:6px; padding:8px 10px; font-size:13px; margin:8px 0; color:#1c3a5e; }
-  .status { font-size:11px; color:#8aa5b0; text-transform:uppercase; letter-spacing:.4px; margin-top:8px; }
-</style></head>
-<body><div class="card">
-  <h1>Quick Mark Pro</h1>
-  <p>Enter the email you paid with to see your license key(s).</p>
-  <input id="email" type="email" placeholder="you@example.com">
-  <button id="go">Find my keys</button>
-  <div id="out"></div>
-</div>
-<script>
-  const go = document.getElementById('go'), out = document.getElementById('out'), email = document.getElementById('email');
-  go.addEventListener('click', async () => {
-    out.innerHTML = '';
-    const e = email.value.trim();
-    if (!e) return;
-    const r = await fetch('/api/portal/keys?email=' + encodeURIComponent(e));
-    const j = await r.json();
-    if (!j.keys || j.keys.length === 0) { out.innerHTML = '<div class="status">No keys found for that email.</div>'; return; }
-    for (const k of j.keys) {
-      const div = document.createElement('div');
-      div.className = 'key';
-      div.textContent = k.key + '  (' + k.status + ')';
-      out.appendChild(div);
-    }
-    out.appendChild(Object.assign(document.createElement('div'), { className: 'status', textContent: 'Paste the key into the Quick Mark Pro activation screen.' }));
-  });
-  email.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') go.click(); });
-</script></body></html>`;
+// Start the email scheduler AFTER Bun.serve so the server is already
+// accepting requests when the immediate microtask tick can fire. No signal
+// handlers — the scheduler's interval is unref'd and the process lifetime is
+// owned by Bun.serve.
+if (emailScheduler) {
+  emailScheduler.start();
+}

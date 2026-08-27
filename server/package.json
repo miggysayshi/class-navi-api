@@ -9,6 +9,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "stripe": "^17.0.0"
+    "stripe": "^17.0.0",
+    "svix": "^1.99.1"
   }
 }
