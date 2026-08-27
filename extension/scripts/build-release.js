@@ -5,7 +5,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -21,41 +20,6 @@ const manifest = JSON.parse(readFileSync(join(extensionDir, "manifest.json"), "u
 const version = manifest.version;
 if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("manifest version is invalid");
 
-const sourceFiles = [
-  join(extensionDir, "manifest.json"),
-  join(extensionDir, "src", "background.js"),
-  join(extensionDir, "src", "content.js"),
-  join(extensionDir, "src", "license.js"),
-];
-const sourceText = sourceFiles.map((path) => readFileSync(path, "utf8")).join("\n");
-const required = [
-  "https://license.nimira-timer.com",
-  "https://buy.stripe.com/14A8wP4Kpfr57ZIgDY8k800",
-  "https://billing.stripe.com/p/login/14A8wP4Kpfr57ZIgDY8k800",
-];
-for (const value of required) {
-  if (!sourceText.includes(value)) throw new Error("release configuration is incomplete");
-}
-for (const value of [
-  "http://localhost",
-  "YOUR-LICENSE-SERVER",
-  "buy.stripe.com/test_",
-  "billing.stripe.com/p/login/test_",
-  "REPLACE_WITH",
-  "qsLicenseDebug",
-  "qs-license-set-debug",
-  "qs:license-set-debug",
-]) {
-  if (sourceText.includes(value)) throw new Error("release configuration contains a forbidden value");
-}
-
-function replaceExact(path, before, after) {
-  const text = readFileSync(path, "utf8");
-  const parts = text.split(before);
-  if (parts.length !== 2) throw new Error(`browser-family seam not unique: ${path}`);
-  writeFileSync(path, parts.join(after));
-}
-
 function buildFamily(family) {
   const stage = mkdtempSync(join(tmpdir(), `class-navi-${family}-`));
   const zipPath = join(outDir, `class-navi-pro-tools-${family}-${version}.zip`);
@@ -65,22 +29,6 @@ function buildFamily(family) {
     cpSync(join(extensionDir, "options.js"), join(stage, "options.js"));
     cpSync(join(extensionDir, "src"), join(stage, "src"), { recursive: true });
     cpSync(join(extensionDir, "icons"), join(stage, "icons"), { recursive: true });
-
-    replaceExact(
-      join(stage, "src", "background.js"),
-      'const BROWSER_FAMILY = "edge";',
-      `const BROWSER_FAMILY = "${family}";`
-    );
-    replaceExact(
-      join(stage, "src", "content.js"),
-      'const BROWSER_FAMILY = "edge";',
-      `const BROWSER_FAMILY = "${family}";`
-    );
-    replaceExact(
-      join(stage, "src", "license.js"),
-      "const BROWSER_FAMILY = BROWSER_FAMILIES.EDGE;",
-      `const BROWSER_FAMILY = BROWSER_FAMILIES.${family === "chrome" ? "CHROME" : "EDGE"};`
-    );
 
     if (existsSync(zipPath)) rmSync(zipPath);
     const zipped = Bun.spawnSync(["zip", "-X", "-q", "-r", zipPath, "."], {

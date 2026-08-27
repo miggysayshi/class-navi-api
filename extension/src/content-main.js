@@ -88,27 +88,10 @@ function runBoots() {
   if (QS.aggregate) QS.aggregate.updateDisplay();
 }
 
-// called by the license gate's Activate button when a key is accepted
-window.__qsLicenseActivated = () => {
-  window.__qsLicensed = true;
-  if (QS.license && QS.license.attachAppUiControl) QS.license.attachAppUiControl();
-  runBoots();
-  refreshLevelStats();
-};
-
 const mo = new MutationObserver(() => {
   clearTimeout(debounce);
-  debounce = setTimeout(async () => {
-    // license gate: features only run for active / offline-grace licenses
-    const lic = await QS.license.getStatus();
-    window.__qsLicensed = QS.license.isActive(lic);
-    if (window.__qsLicensed) {
-      QS.license.hideGate();
-      if (QS.license.attachAppUiControl) QS.license.attachAppUiControl();
-      runBoots();
-    } else {
-      QS.license.showGate(lic);
-    }
+  debounce = setTimeout(() => {
+    runBoots();
   }, 250);
 });
 mo.observe(document.documentElement, { childList: true, subtree: true });
@@ -254,11 +237,6 @@ function computeGapStats() {
  */
 function refreshLevelStats() {
   try {
-    if (!window.__qsLicensed) {
-      const gone = document.getElementById("qs-level-stats");
-      if (gone) gone.remove();
-      return;
-    }
     const s = computeLevelStats();
     const g = computeGapStats();
     let chip = document.getElementById("qs-level-stats");

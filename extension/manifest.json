@@ -6,10 +6,8 @@
   "description": "One-click study patterns (4-3-3, 3-2-3-2, ...), page marking, red-ink comments, and level stats inside Class-Navi.",
   "permissions": ["storage"],
   "host_permissions": [
-    "https://class-navi.digital.kumon.com/*",
-    "https://license.nimira-timer.com/*"
+    "https://class-navi.digital.kumon.com/*"
   ],
-  "background": { "service_worker": "src/background.js" },
   "content_scripts": [
     {
       "matches": ["https://class-navi.digital.kumon.com/*"],
@@ -17,7 +15,6 @@
         "src/patterns.js",
         "src/lib.js",
         "src/angular-hooks.js",
-        "src/license.js",
         "src/day-blocks.js",
         "src/dropdown.js",
         "src/aggregate.js",

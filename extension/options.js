@@ -4,27 +4,6 @@ const inputEl = document.getElementById("pattern-input");
 const addBtn = document.getElementById("add-btn");
 const errorEl = document.getElementById("error");
 
-// "License & billing" surface — reachable by active subscribers from options.
-// Links come from the single source of truth in QS.license (never hard-coded here).
-function renderBilling() {
-  try {
-    const box = document.getElementById("license-billing-links");
-    if (!box) return;
-    const links = (QS.license && QS.license.billingLinks) ? QS.license.billingLinks() : [];
-    box.replaceChildren();
-    for (const link of links) {
-      const a = document.createElement("a");
-      a.href = link.href;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = link.label;
-      box.appendChild(a);
-    }
-  } catch (e) {
-    /* options page never throws for a missing license module */
-  }
-}
-
 const NATIVE = new Set(QS.storage.NATIVE_PATTERNS);
 
 async function render() {
@@ -95,4 +74,3 @@ inputEl.addEventListener("keydown", (e) => {
 });
 
 render();
-renderBilling();

@@ -1,3 +1,7 @@
+// release-hardening.test.js — contract: the release sources (what the build
+// ZIPs actually contain) ship no licensing gates, license URLs, QMP strings,
+// activation UI, debug bypass, or browser-family seam, and the manifest is
+// class-navi-only with no background worker.
 import { test, expect } from "bun:test";
 
 const root = new URL("../", import.meta.url);
@@ -6,44 +10,44 @@ async function text(path) {
   return Bun.file(new URL(path, root)).text();
 }
 
-test("release sources use the production license origin and contain no debug bypass", async () => {
-  const [background, content, license, manifestText] = await Promise.all([
-    text("src/background.js"),
-    text("src/content.js"),
-    text("src/license.js"),
+const FORBIDDEN = [
+  "license.nimira-timer.com",
+  "buy.stripe.com",
+  "billing.stripe.com",
+  "stripe",
+  "Stripe",
+  "QMP-",
+  "qsLicenseDebug",
+  "qs-license",
+  "qs:license",
+  "BROWSER_FAMILY",
+  "browser_family",
+  "showGate",
+  "hideGate",
+  "getStatus",
+  "__qsLicensed",
+  "__qsLicenseActivated",
+  "renderBilling",
+  "billingLinks",
+  "CHECKOUT_URL",
+  "PORTAL_URL",
+  "RECOVERY_URL",
+];
+
+test("release sources contain zero licensing artifacts and the manifest is class-navi-only", async () => {
+  const [manifestText, main, content, optionsHtml, optionsJs] = await Promise.all([
     text("manifest.json"),
+    text("src/content-main.js"),
+    text("src/content.js"),
+    text("options.html"),
+    text("options.js"),
   ]);
   const manifest = JSON.parse(manifestText);
-  const productionOrigin = "https://license.nimira-timer.com";
+  expect(manifest.host_permissions).toEqual(["https://class-navi.digital.kumon.com/*"]);
+  expect(manifest.background).toBeUndefined();
 
-  expect(background).toContain(`const API_BASE = "${productionOrigin}"`);
-  expect(content).toContain(`const API_BASE = "${productionOrigin}"`);
-  expect(license).toContain(`const RECOVERY_URL = "${productionOrigin}/portal"`);
-  expect(license).toContain(
-    'const CHECKOUT_URL = "https://buy.stripe.com/14A8wP4Kpfr57ZIgDY8k800"'
-  );
-  expect(license).toContain(
-    'const PORTAL_URL = "https://billing.stripe.com/p/login/14A8wP4Kpfr57ZIgDY8k800"'
-  );
-  expect(manifest.host_permissions).toEqual([
-    "https://class-navi.digital.kumon.com/*",
-    `${productionOrigin}/*`,
-  ]);
-
-  const releaseText = [background, content, license, manifestText].join("\n");
-  for (const forbidden of [
-    "http://localhost:8787",
-    "YOUR-LICENSE-SERVER",
-    "buy.stripe.com/test_",
-    "billing.stripe.com/p/login/test_",
-    "REPLACE_WITH_PORTAL_ID",
-    "qsLicenseDebug",
-    "qs-license-set-debug",
-    "qs:license-set-debug",
-    "function setDebug",
-    "debug-on",
-    "debug-off",
-  ]) {
+  const releaseText = [manifestText, main, content, optionsHtml, optionsJs].join("\n");
+  for (const forbidden of FORBIDDEN) {
     expect(releaseText).not.toContain(forbidden);
   }
 });
